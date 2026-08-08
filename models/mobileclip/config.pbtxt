@@ -1,0 +1,23 @@
+name: "mobileclip"
+platform: "pytorch_libtorch"
+max_batch_size: 16
+input [
+  {
+    name: "input__0"
+    data_type: TYPE_FP32
+    dims: [ 3, 256, 256 ]
+  }
+]
+output [
+  {
+    name: "output__0"
+    data_type: TYPE_FP32
+    dims: [ 512 ]
+  }
+]
+instance_group [
+  {
+    count: 1
+    kind: KIND_GPU
+  }
+]

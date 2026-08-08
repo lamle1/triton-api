@@ -1,0 +1,122 @@
+# ==============================================================================
+# Triton API - Production Docker Compose (Prebuilt Docker Image)
+# ==============================================================================
+
+services:
+  triton-remote:
+    image: nvcr.io/nvidia/tritonserver:24.06-py3
+    container_name: triton-server
+    runtime: nvidia
+    networks:
+      - triton-net
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+    privileged: true
+    ports:
+      - "8000:8000"
+      - "8001:8001"
+      - "8002:8002"
+    volumes:
+      - models_data:/models
+      - trt_cache:/trt_cache
+    command: >
+      tritonserver --model-repository=/models --log-verbose=1
+      --model-control-mode=explicit
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities:
+                - gpu
+    restart: unless-stopped
+
+  api:
+    image: ghcr.io/lamle1/triton-api:latest
+    container_name: triton-api
+    runtime: nvidia
+    networks:
+      - triton-net
+    ports:
+      - "8003:8003"
+    environment:
+      TZ: "Asia/Ho_Chi_Minh"
+      TRITON_GRPC_URL: triton-server:8001
+      TRITON_HTTP_URL: http://triton-server:8000
+      TRITON_METRICS_URL: http://triton-server:8002/metrics
+      MODEL_REPO_PATH: /model_repo
+      REQUIRE_API_KEY: "${REQUIRE_API_KEY:-true}"
+      YOLOE_WEIGHTS: /weights/yoloe-v8s-seg.pt
+      API_PORT: "8003"
+      UVICORN_WORKERS: "1"
+      MAX_CONCURRENT: "32"
+      MAX_FPS: "0"
+      MAX_BATCH_FILES: "32"
+      GO2RTC_API_URL: http://go2rtc:1984
+      GO2RTC_PUBLIC_URL: ${GO2RTC_PUBLIC_URL:-http://localhost:1984}
+      CORS_ORIGINS: "${CORS_ORIGINS:-*}"
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD:-admin123}"
+      NVIDIA_VISIBLE_DEVICES: all
+    volumes:
+      - models_data:/model_repo
+      - weights_data:/weights
+      - events_data:/events_images
+      - recordings_data:/app/recordings
+      - api_data:/app/data
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /etc/localtime:/etc/localtime:ro
+    depends_on:
+      - triton-remote
+      - go2rtc
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities:
+                - gpu
+    restart: unless-stopped
+
+  go2rtc:
+    image: alexxit/go2rtc:latest
+    container_name: triton-go2rtc
+    networks:
+      - triton-net
+    ports:
+      - "1984:1984"
+      - "8554:8554"
+      - "8555:8555/tcp"
+      - "8555:8555/udp"
+    environment:
+      - RTSP_LOW_LATENCY=false
+    volumes:
+      - go2rtc_config:/config
+    command: ["go2rtc", "-config", "/config/go2rtc.yaml"]
+    restart: unless-stopped
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: qdrant
+    networks:
+      - triton-net
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    restart: unless-stopped
+
+networks:
+  triton-net:
+    driver: bridge
+
+volumes:
+  models_data:
+  weights_data:
+  api_data:
+  events_data:
+  recordings_data:
+  qdrant_data:
+  trt_cache:
+  go2rtc_config:

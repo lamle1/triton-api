@@ -1,0 +1,23 @@
+name: "osnet"
+platform: "onnxruntime_onnx"
+max_batch_size: 16
+input [
+  {
+    name: "images"
+    data_type: TYPE_FP32
+    dims: [ 3, 256, 128 ]
+  }
+]
+output [
+  {
+    name: "output"
+    data_type: TYPE_FP32
+    dims: [ 512 ]
+  }
+]
+instance_group [
+  {
+    count: 1
+    kind: KIND_GPU
+  }
+]

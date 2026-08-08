@@ -1,0 +1,21 @@
+api:
+  listen: ":1984"
+  # Allow the triton-api container (internal network) to call go2rtc.
+  # The browser never contacts go2rtc directly — it goes through the API proxy at /go2rtc/...
+  origin: "*"
+
+rtsp:
+  listen: ":8554"
+
+webrtc:
+  listen: ":8555"
+  # Public ICE STUN server — required for WebRTC to work across NAT.
+  ice_servers:
+    - urls: [stun:stun.l.google.com:19302]
+    - urls: [stun:stun1.l.google.com:19302]
+
+ffmpeg:
+  bin: ffmpeg
+
+# Managed RTSP streams are dynamically registered by API Server at runtime.
+streams: {}
