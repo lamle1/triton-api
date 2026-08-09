@@ -1,0 +1,2823 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light" class="light">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Triton Manager — Inference Dashboard</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2376B900'/%3E%3Cg transform='translate(4,4)' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z'/%3E%3Cpolyline points='3.27 6.96 12 12.01 20.73 6.96'/%3E%3Cline x1='12' y1='22.08' x2='12' y2='12'/%3E%3C/g%3E%3C/svg%3E" />
+<script>
+  // Anti-flash & theme restoration logic: restore theme and hide login overlay synchronously
+  (function() {
+    try {
+      const savedTheme = localStorage.getItem("triton_theme");
+      if (savedTheme) {
+        document.documentElement.setAttribute("data-theme", savedTheme);
+        if (savedTheme === "dark") {
+          document.documentElement.classList.add("dark");
+          document.documentElement.classList.remove("light");
+        } else {
+          document.documentElement.classList.remove("dark");
+          document.documentElement.classList.add("light");
+        }
+      } else {
+        document.documentElement.setAttribute("data-theme", "light");
+        document.documentElement.classList.remove("dark");
+        document.documentElement.classList.add("light");
+      }
+    } catch (e) {}
+
+    if (sessionStorage.getItem("triton_session_active") === "true" || localStorage.getItem("triton_admin_remember") === "true") {
+      document.write('<style id="anti-flash-style">#admin-login-overlay { display: none !important; }</style>');
+    }
+  })();
+</script>
+
+<!-- Tailwind CSS -->
+<script src="tailwind.js"></script>
+<script>
+  tailwind.config = {
+    darkMode: 'class',
+    theme: {
+      extend: {
+        colors: {
+          background: 'var(--color-background)',
+          background_alt: 'var(--color-background-alt)',
+          secondary: 'var(--color-secondary)',
+          'secondary-highlight': 'var(--color-secondary-highlight)',
+          primary: 'var(--color-primary)',
+          'primary-variant': 'var(--color-primary-variant)',
+          selected: 'var(--color-selected)',
+          danger: 'var(--color-danger)'
+        }
+      }
+    }
+  }
+</script>
+
+<!-- HLS.js — enables .m3u8 live/VOD playback in Chrome/Firefox (Safari has native support) -->
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js"></script>
+
+<link rel="stylesheet" href="admin.css" />
+
+<style type="text/tailwindcss">
+  input[type="checkbox"], input[type="radio"] { accent-color: #10b981 !important; cursor: pointer; }
+  /* Reset body so Tailwind flex layout drives the sidebar + pageRoot split */
+  body { display: flex; overflow: hidden; background: var(--color-background); height: 100vh; }
+  /* #main scrolls inside the fixed-height pageRoot (flex-col overflow-hidden) */
+  #main { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow-y: auto; padding: 8px; gap: 0; }
+  @media (min-width: 768px) {
+    #main { padding: 16px; }
+  }
+  /* sidebar-btn styles (JS adds/removes .active class) */
+  .sidebar-btn {
+    margin-left: 4px;
+    margin-right: 4px;
+    margin-top: 0px;
+    margin-bottom: 8px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    padding: 8px;
+    transition: all 0.15s ease;
+    border-radius: var(--radius);
+  }
+  @media (min-width: 768px) {
+    .sidebar-btn {
+      margin-left: 10px;
+      margin-right: 10px;
+      margin-bottom: 8px;
+    }
+  }
+  .sidebar-btn.active { background: var(--bg3); color: var(--text); }
+  .sidebar-btn:not(.active) { color: var(--text2); }
+  .sidebar-btn:hover { background: var(--bg3); color: var(--text); }
+
+  @keyframes pulse {
+    0% { opacity: 1; }
+    50% { opacity: 0.3; }
+    100% { opacity: 1; }
+  }
+  .trk-del-btn { opacity: 0; transition: opacity 0.2s ease, transform 0.15s ease, background-color 0.15s ease; }
+  .trk-card:hover .trk-del-btn { opacity: 1 !important; }
+</style>
+</head>
+<body class="bg-background text-primary h-screen w-screen overflow-hidden flex font-sans transition-colors duration-300">
+
+<!-- ─── SIDEBAR ───────────────────────────────────────────────── -->
+<aside class="scrollbar-hidden absolute z-30 flex bg-background_alt transition-all duration-300 border-secondary-highlight inset-x-0 bottom-0 top-auto h-14 w-full flex-row justify-between items-center px-2 py-0 border-t md:inset-y-0 md:left-0 md:top-0 md:bottom-0 md:h-auto md:w-[52px] md:flex-col md:py-4 md:px-0 md:border-r md:border-t-0 md:justify-between">
+  <div class="flex flex-row md:flex-col items-center justify-around md:justify-start flex-1 md:flex-initial md:w-full gap-0 md:gap-2">
+    <!-- Logo -->
+    <a href="#" class="hidden md:flex md:mb-6 items-center justify-center" title="Triton Manager" data-title-default="Triton Manager">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="h-8 w-8 text-primary" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line>
+      </svg>
+    </a>
+
+    <!-- System (formerly Settings) -->
+    <div class="w-auto md:w-full" title="System" data-i18n-title="nav.system" data-title-default="System">
+      <div id="btn-nav-system" onclick="switchPage('models')" class="sidebar-btn active">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="size-5">
+          <rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect>
+          <rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect>
+          <line x1="6" y1="6" x2="6.01" y2="6"></line>
+          <line x1="6" y1="18" x2="6.01" y2="18"></line>
+        </svg>
+      </div>
+    </div>
+
+    <!-- API Keys -->
+    <div class="w-auto md:w-full" title="API Keys" data-i18n-title="nav.keys" data-title-default="API Keys">
+      <div id="btn-nav-keys" onclick="switchPage('keys')" class="sidebar-btn">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="size-5">
+          <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"></path>
+        </svg>
+      </div>
+    </div>
+
+    <div class="hidden md:block w-full h-px bg-secondary-highlight my-2"></div>
+
+    <!-- Tracking -->
+    <div class="w-auto md:w-full" title="Tracking" data-i18n-title="nav.tracking" data-title-default="Tracking">
+      <div id="btn-nav-tracking" onclick="switchPage('tracking')" class="sidebar-btn">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="size-5">
+          <circle cx="6" cy="19" r="3"></circle>
+          <path d="M9 19h8.5a3.5 3.5 0 0 0 0-7h-11a3.5 3.5 0 0 1 0-7H15"></path>
+          <circle cx="18" cy="5" r="3"></circle>
+        </svg>
+      </div>
+    </div>
+
+    <!-- Stream -->
+    <div class="w-auto md:w-full" title="Stream" data-i18n-title="nav.stream" data-title-default="Stream">
+      <div id="btn-nav-stream" onclick="switchPage('stream')" class="sidebar-btn">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="size-5">
+          <path d="M23 7l-7 5 7 5V7z"></path>
+          <rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect>
+        </svg>
+      </div>
+    </div>
+  </div>
+
+  <div class="flex flex-row md:flex-col items-center gap-4 md:mb-8 md:w-full">
+    <!-- Logout -->
+    <div class="w-auto md:w-full" title="Logout" data-i18n-title="nav.logout" data-title-default="Logout">
+      <div id="btn-nav-logout" onclick="logoutAdmin()" class="sidebar-btn hover:text-danger">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="size-5">
+          <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+          <polyline points="16 17 21 12 16 7"></polyline>
+          <line x1="21" y1="12" x2="9" y2="12"></line>
+        </svg>
+      </div>
+    </div>
+  </div>
+</aside>
+
+<!-- ─── MAIN ─────────────────────────────────────────────────── -->
+<main id="pageRoot" class="absolute right-0 top-0 left-0 bottom-14 md:bottom-0 md:left-[52px] overflow-hidden flex flex-col bg-background transition-colors duration-300">
+  <!-- TOP BAR -->
+  <div class="flex h-12 w-full flex-row items-center justify-end p-2 border-b border-secondary-highlight bg-background gap-2 shadow-sm z-20">
+    <div class="mr-auto pl-2 font-semibold text-xs tracking-wider text-primary-variant uppercase" style="color: var(--color-primary-variant); font-family: var(--font-sans);">Admin Portal</div>
+    
+    <!-- Hidden inputs to prevent client script failures -->
+    <input type="hidden" id="host-input" value="" />
+    <input type="hidden" id="api-key-input" value="" />
+    
+    <div class="status-pill text-xs">
+      <div class="status-dot" id="triton-dot"></div>
+      <span id="triton-label" class="hidden sm:inline">Connecting...</span>
+    </div>
+    
+    <select class="lang-select text-xs" id="lang-select" onchange="setLanguage(this.value, true)" title="Language" data-title-default="Language">
+      <option value="en">English</option>
+      <option value="vi">Tiếng Việt</option>
+    </select>
+
+    <!-- Theme Toggle -->
+    <button onclick="toggleTheme()" class="theme-toggle flex items-center justify-center border border-secondary-highlight text-primary-variant hover:text-primary rounded-lg transition-colors p-1" title="Toggle Theme" data-title-default="Toggle Theme">
+      <svg id="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="line-icon hidden">
+        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+      </svg>
+      <svg id="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="line-icon">
+        <circle cx="12" cy="12" r="5"></circle>
+        <line x1="12" y1="1" x2="12" y2="3"></line>
+        <line x1="12" y1="21" x2="12" y2="23"></line>
+        <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+        <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+        <line x1="1" y1="12" x2="3" y2="12"></line>
+        <line x1="21" y1="12" x2="23" y2="12"></line>
+        <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+        <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+      </svg>
+    </button>
+  </div>
+
+  <div id="main">
+
+    <!-- ══ DETECT PAGE ══════════════════════════════════════════ -->
+    <div class="page" id="page-detect">
+      <div class="flex border-b border-secondary-highlight mb-4 gap-4 px-1">
+        <button class="px-3 py-2 text-xs font-semibold border-b-2 border-transparent text-primary-variant hover:text-primary transition-all duration-200" onclick="switchPage('stream')">Stream</button>
+        <button class="px-3 py-2 text-xs font-semibold border-b-2 border-selected text-primary transition-all duration-200" onclick="switchPage('detect')">Detect</button>
+      </div>
+      <div class="detect-grid">
+        <div class="panel">
+          <div class="panel-header">
+            <span class="panel-title" data-i18n="panel.image_inference">Image Inference</span>
+            <div style="margin-left:auto;display:flex;gap:8px;align-items:center;">
+              <div class="infer-stats" id="detect-stats"></div>
+              <button class="btn btn-ghost" id="clear-btn" onclick="clearDetect()" style="display:none;padding:4px 10px;font-size:10px;">✕ Clear</button>
+            </div>
+          </div>
+          <div class="panel-body">
+            <div class="detect-mode-tabs">
+              <button class="detect-mode-btn active" onclick="setDetectMode('image')" data-i18n="mode.image">IMAGE</button>
+              <button class="detect-mode-btn" onclick="setDetectMode('video')" data-i18n="mode.video">VIDEO</button>
+              <button class="detect-mode-btn" onclick="setDetectMode('webcam')" data-i18n="mode.webcam">WEBCAM</button>
+            </div>
+            <!-- image mode -->
+            <div id="detect-image-pane">
+              <div id="canvas-wrap">
+                <canvas id="preview-canvas"></canvas>
+                <canvas id="overlay-canvas"></canvas>
+              </div>
+              <div class="dropzone" id="dropzone"
+                  onclick="document.getElementById('file-input').click()"
+                  ondragover="handleDragOver(event)" ondrop="handleDrop(event)">
+                <div class="dropzone-icon" style="font-size:20px;opacity:.3;">&#8593;</div>
+                <div class="dropzone-text" data-i18n="drop.image">Drop image here or click to browse</div>
+                <div class="dropzone-sub">JPEG · PNG supported</div>
+              </div>
+              <input type="file" id="file-input" accept="image/jpeg,image/png" style="display:none" onchange="handleFileSelect(event)" />
+            </div>
+            <!-- video mode -->
+            <div id="detect-video-pane">
+              <div id="vid-dropzone" class="dropzone" onclick="document.getElementById('vid-file-input').click()"
+                  ondragover="event.preventDefault();this.classList.add('drag')" ondragleave="this.classList.remove('drag')"
+                  ondrop="this.classList.remove('drag');const f=event.dataTransfer.files[0];if(f){const dt=new DataTransfer();dt.items.add(f);document.getElementById('vid-file-input').files=dt.files;loadVidFile({target:document.getElementById('vid-file-input')})}event.preventDefault()">
+                <div class="dropzone-icon" style="font-size:20px;opacity:.3;">&#9654;</div>
+                <div class="dropzone-text" data-i18n="drop.video">Drop video here or click to browse</div>
+                <div class="dropzone-sub">MP4 · WebM · MOV supported</div>
+              </div>
+              <div id="vid-player-wrap" style="display:none;position:relative;background:#000;border-radius:var(--radius);overflow:hidden;">
+                <video id="detect-video" preload="metadata"></video>
+                <canvas id="detect-video-overlay" style="position:absolute;top:0;left:0;pointer-events:none;width:100%;height:100%;"></canvas>
+                <div class="video-controls">
+                  <button class="btn btn-primary" id="vid-det-start" onclick="startVideoDetect()" style="padding:4px 10px;font-size:10px;display:inline-flex;align-items:center;gap:4px;" disabled>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:10px;height:10px;"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                    <span data-i18n="action.start_detect">Start Detect</span>
+                  </button>
+                  <button class="btn btn-danger" id="vid-det-stop" style="display:none;padding:4px 10px;font-size:10px;display:inline-flex;align-items:center;gap:4px;" onclick="stopVideoDetect()">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:10px;height:10px;"><rect x="4" y="4" width="16" height="16" rx="1" ry="1"></rect></svg>
+                    <span>Stop Detect</span>
+                  </button>
+                  <button class="vid-btn" id="vid-playpause" onclick="vidPlayPause()">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:11px;height:11px;display:block;margin:auto;"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                  </button>
+                  <input type="range" class="seek-bar" id="vid-seek" value="0" min="0" step="0.01" oninput="vidSeek(this.value)" style="flex:1;" />
+                  <span class="vid-time" id="vid-time">0:00 / 0:00</span>
+                  <button class="vid-btn spd-active" id="vs1" onclick="vidSpeed(1,this)">1×</button>
+                  <button class="vid-btn" id="vs2" onclick="vidSpeed(2,this)">2×</button>
+                  <button class="vid-btn" id="vs3" onclick="vidSpeed(3,this)">3×</button>
+                  <button class="vid-btn" id="vs4" onclick="vidSpeed(4,this)">4×</button>
+                  <button class="vid-btn" onclick="vidFullscreen()" title="Fullscreen">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:11px;height:11px;display:block;margin:auto;"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path></svg>
+                  </button>
+                  <button class="btn btn-ghost" onclick="document.getElementById('vid-file-input').click()" style="padding:4px 10px;font-size:10px;display:inline-flex;align-items:center;gap:4px;">
+                    <span class="btn-icon"><svg class="line-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h6l2 2h10v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6z"></path></svg></span>
+                    <span data-i18n="action.open">Open</span>
+                  </button>
+                </div>
+              </div>
+
+              <input type="file" id="vid-file-input" accept="video/*" style="display:none" onchange="loadVidFile(event)" />
+            </div>
+            <!-- webcam mode -->
+            <div id="detect-webcam-pane">
+              <div id="webcam-detect-wrap" style="position:relative;background:#000;border-radius:var(--radius);overflow:hidden;min-height:200px;">
+                <canvas id="webcam-detect-canvas" style="display:block;max-width:100%;"></canvas>
+                <div class="video-controls">
+                  <button class="btn btn-primary" id="webcam-det-start" onclick="startDetectWebcam()" style="display:inline-flex;align-items:center;gap:4px;">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:10px;height:10px;"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                    <span data-i18n="action.start_webcam">Start Webcam</span>
+                  </button>
+                  <button class="btn btn-danger" id="webcam-det-stop" style="display:none;display:inline-flex;align-items:center;gap:4px;" onclick="stopDetectWebcam()">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:10px;height:10px;"><rect x="4" y="4" width="16" height="16" rx="1" ry="1"></rect></svg>
+                    <span>Stop</span>
+                  </button>
+                  <select class="param-input" id="webcam-det-device" style="flex:1;max-width:220px;"><option value="">Default Camera</option></select>
+                  <button class="btn btn-ghost" onclick="enumerateDetectCameras()" style="padding:4px 8px;font-size:10px;" title="Refresh cameras">⟳</button>
+                  <button class="vid-btn" onclick="webcamDetFullscreen()" title="Fullscreen">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:11px;height:11px;display:block;margin:auto;"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path></svg>
+                  </button>
+                </div>
+              </div>
+
+            </div>
+          </div>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:10px;">
+          <div class="panel">
+            <div class="panel-header"><span class="panel-title" data-i18n="panel.parameters">Parameters</span>
+              <button class="btn btn-ghost" style="margin-left:auto;padding:4px 8px;font-size:10px;" onclick="loadModels()">⟳</button>
+            </div>
+            <div class="panel-body">
+              <div class="param-row">
+                <span class="param-label" title="Models to run for this inference. Selecting more models increases latency and GPU load.">models</span>
+                <div class="relative w-full" id="d-model-select-wrap">
+                  <button type="button" class="param-input flex items-center justify-between w-full text-left cursor-pointer" id="d-model-select-btn" onclick="toggleModelDropdown('d', event)">
+                    <span class="truncate text-xs font-mono text-primary" id="d-model-select-label">Select models...</span>
+                    <svg class="h-4 w-4 text-primary-variant transition-transform duration-200" id="d-model-select-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+                  </button>
+                  <div id="d-model-select-menu" style="display:none; position:absolute !important; top:100%; left:0; right:0; margin-top:4px; z-index:9999; background:var(--bg2); border:1px solid var(--border); border-radius:var(--radius); box-shadow:0 10px 25px -5px rgba(0,0,0,0.5); padding:8px; max-height:220px; overflow-y:auto; flex-direction:column; gap:4px;" onclick="event.stopPropagation()">
+                    <div class="flex items-center justify-between pb-1.5 mb-1 border-b border-secondary-highlight px-1">
+                      <span class="text-[10px] font-mono text-primary-variant uppercase tracking-wider" id="d-model-count">0 selected</span>
+                      <div class="flex gap-1.5">
+                        <button type="button" class="text-[10px] font-semibold text-primary-variant hover:text-primary px-1.5 py-0.5 rounded hover:bg-secondary transition-colors" onclick="selectAllModels(true)">All</button>
+                        <button type="button" class="text-[10px] font-semibold text-primary-variant hover:text-primary px-1.5 py-0.5 rounded hover:bg-secondary transition-colors" onclick="selectAllModels(false)">None</button>
+                      </div>
+                    </div>
+                    <div class="flex flex-col gap-0.5" id="d-model-list">
+                      <span class="model-check-empty text-xs font-mono text-primary-variant p-1">Loading…</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="param-row">
+                <span class="param-label" title="Text prompts for YOLOE models only. Normal YOLO uses labels saved with the model.">classes</span>
+                <input class="param-input" id="d-classes" placeholder="YOLOE prompts only (e.g. person,car)" title="Only sent to YOLOE models as text prompts. Normal YOLO uses labels configured in the Model Config tab." />
+              </div>
+              <div class="param-row">
+                <span class="param-label" title="Image size sent into the model. Larger can improve small objects but costs more latency.">imgsz</span>
+                <input class="param-input" id="d-imgsz" value="640" style="width:90px;" />
+              </div>
+              <div class="param-row">
+                <span class="param-label" title="Minimum confidence score. Higher means fewer, stricter detections.">conf</span>
+                <input class="param-input" id="d-conf" type="number" min="0" max="1" step="0.05" value="0.5" style="width:80px;" />
+              </div>
+              <div class="param-row">
+                <span class="param-label" title="NMS overlap threshold. Lower removes more overlapping boxes; higher keeps more boxes.">iou</span>
+                <input class="param-input" id="d-iou" type="number" min="0" max="1" step="0.05" value="0.45" style="width:80px;" />
+              </div>
+              <div class="param-row">
+                <span class="param-label" title="Client live inference FPS cap for video/webcam. The API max_fps can clamp this value.">live fps</span>
+                <input class="param-input" id="d-fps" type="number" min="1" max="240" step="1" value="10" onchange="clampFpsInput(this, 10, true)"
+                  style="width:80px;" title="Custom FPS cap for webcam/video live inference. Clamped to API max_fps." />
+                <span id="d-fps-limit" style="font-family:var(--font-mono);font-size:10px;color:var(--text3);white-space:nowrap;">API max: unlimited</span>
+              </div>
+              <div class="param-row">
+                <span class="param-label" title="Exact Boxes keeps boxes/masks on inference frames. Native FPS uses the source-rate path when available, accepting more latency for smoother video.">overlay</span>
+                <select class="param-input" id="d-overlay-mode" style="width:100%;" onchange="onDetectOverlayModeChange()">
+                  <option value="exact" selected data-i18n="option.exact_latency">Exact Boxes - good latency</option>
+                  <option value="native_exact" data-i18n="option.native_exact">Native FPS Live - JSON overlay</option>
+                </select>
+              </div>
+              <div class="param-row">
+                <span class="param-label" title="Enable ByteTrack object tracking — assigns persistent IDs to each detected object across frames.">tracking</span>
+                <label style="font-family:var(--font-sans);font-size:11px;color:var(--text);display:flex;align-items:center;gap:6px;cursor:pointer;flex:1;">
+                  <input type="checkbox" id="detect-global-tracking" />
+                  <span>Enable ByteTrack Tracking</span>
+                </label>
+              </div>
+              <button class="btn btn-primary btn-full" id="run-btn" onclick="runDetect()" disabled>▶ <span data-i18n="action.run_inference">RUN INFERENCE</span></button>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-header">
+              <span class="panel-title" data-i18n="panel.detections">Detections</span>
+              <span id="det-count" style="margin-left:auto;font-family:var(--font-mono);font-size:10px;color:var(--text3);"></span>
+            </div>
+            <div class="panel-body" style="padding:10px;">
+              <div class="results-list" id="results-list">
+                <div class="empty-state"><div class="empty-icon">⬤</div>No results yet</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══ STREAM PAGE ══════════════════════════════════════════ -->
+    <div class="page" id="page-stream">
+      <div class="flex border-b border-secondary-highlight mb-4 gap-4 px-1">
+        <button class="px-3 py-2 text-xs font-semibold border-b-2 border-selected text-primary transition-all duration-200" onclick="switchPage('stream')">Stream</button>
+        <button class="px-3 py-2 text-xs font-semibold border-b-2 border-transparent text-primary-variant hover:text-primary transition-all duration-200" onclick="switchPage('detect')">Detect</button>
+      </div>
+      <div class="stream-toolbar">
+        <span class="stream-toolbar-label" data-i18n="nav.stream">Streams</span>
+        <button class="btn btn-ghost" onclick="loadModels()" style="padding:4px 10px;font-size:10px;">⟳ <span data-i18n="action.models">Models</span></button>
+        <button class="btn btn-primary" style="margin-left:auto;" onclick="openAddStream('stream')">+ <span data-i18n="action.add_stream">Add Stream</span></button>
+        <button class="btn btn-danger" id="stream-stop-all" style="display:none;" onclick="stopAllStreams('stream')">■ <span data-i18n="action.stop_all">Stop All</span></button>
+      </div>
+
+      <!-- Stats Bar -->
+      <div class="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 gap-3 mb-4 p-3.5 bg-background_alt border border-secondary-highlight rounded-lg">
+        <div class="flex flex-col">
+          <span class="text-[9px] font-bold uppercase tracking-wider text-primary-variant" title="Detection JSON results received per second across all cameras.">Detection FPS</span>
+          <span class="text-xs font-semibold text-primary mt-1" id="stream-total-fps">0</span>
+        </div>
+        <div class="flex flex-col">
+          <span class="text-[9px] font-bold uppercase tracking-wider text-primary-variant" title="Download bandwidth from API RTSP bridge to this browser.">Src Bandwidth</span>
+          <span class="text-xs font-semibold text-primary mt-1" id="stream-total-bandwidth">—</span>
+        </div>
+        <div class="flex flex-col">
+          <span class="text-[9px] font-bold uppercase tracking-wider text-primary-variant" title="Upload bandwidth from browser to API inference WebSocket.">Infer Upload</span>
+          <span class="text-xs font-semibold text-primary mt-1" id="stream-total-upload">—</span>
+        </div>
+        <div class="flex flex-col">
+          <span class="text-[9px] font-bold uppercase tracking-wider text-primary-variant" title="Download bandwidth for detection JSON results.">JSON Bandwidth</span>
+          <span class="text-xs font-semibold text-primary mt-1" id="stream-total-result">—</span>
+        </div>
+        <div class="flex flex-col">
+          <span class="text-[9px] font-bold uppercase tracking-wider text-primary-variant" title="Average browser round-trip inference latency.">Avg Latency</span>
+          <span class="text-xs font-semibold text-primary mt-1" id="stream-total-avg">—</span>
+        </div>
+        <div class="flex flex-col">
+          <span class="text-[9px] font-bold uppercase tracking-wider text-primary-variant" title="Maximum browser round-trip inference latency.">Max Latency</span>
+          <span class="text-xs font-semibold text-primary mt-1" id="stream-total-max">—</span>
+        </div>
+      </div>
+      <div class="stream-grid" id="stream-grid">
+        <div class="stream-empty" id="stream-empty">
+          <div class="empty-icon" style="font-size:24px;">&#9635;</div>
+          <div data-i18n="empty.no_streams">No streams active</div>
+          <div style="margin-top:8px;font-size:11px;">Click "+ Add Stream" to start webcam or video file inference</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══ MODELS PAGE ═══════════════════════════════════════════ -->
+    <div class="page active" id="page-models">
+      <div class="flex border-b border-secondary-highlight mb-4 gap-4 px-1">
+        <button class="px-3 py-2 text-xs font-semibold border-b-2 border-selected text-primary transition-all duration-200" onclick="switchPage('models')">Models Config</button>
+        <button class="px-3 py-2 text-xs font-semibold border-b-2 border-transparent text-primary-variant hover:text-primary transition-all duration-200" onclick="switchPage('ensemble')">Ensembles</button>
+        <button class="px-3 py-2 text-xs font-semibold border-b-2 border-transparent text-primary-variant hover:text-primary transition-all duration-200" onclick="switchPage('accounts')">Accounts</button>
+        <button class="px-3 py-2 text-xs font-semibold border-b-2 border-transparent text-primary-variant hover:text-primary transition-all duration-200" onclick="switchPage('system')">System Health</button>
+      </div>
+      <div class="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_360px] gap-[14px]">
+        <div class="panel">
+          <div class="panel-header">
+            <span class="panel-title" data-i18n="panel.loaded_models">Loaded Models</span>
+            <button class="btn btn-ghost" style="margin-left:auto;padding:4px 10px;" onclick="loadModels()">⟳ <span data-i18n="action.refresh">Refresh</span></button>
+          </div>
+          <div class="panel-body" style="padding:10px;">
+            <div class="models-grid" id="models-grid">
+              <div class="empty-state"><div class="empty-icon">⬤</div><span data-i18n="empty.no_models">No models loaded</span></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-header"><span class="panel-title" data-i18n="panel.upload_model">Upload Model (.pt / .onnx)</span></div>
+          <div class="panel-body">
+            <div class="upload-dropzone" id="upload-dropzone"
+                 onclick="document.getElementById('model-file-input').click()"
+                 ondragover="handleUploadDragOver(event)" ondrop="handleUploadDrop(event)">
+              <div style="font-size:16px;margin-bottom:6px;opacity:.4;">&#8593;</div>
+              <div id="upload-filename">Drag .pt / .pth / .onnx here or click</div>
+            </div>
+            <input type="file" id="model-file-input" accept=".pt,.pth,.onnx" style="display:none" onchange="handleModelFileSelect(event)" />
+            <div class="divider" style="margin:12px 0;"></div>
+            <div class="param-row">
+              <span class="param-label">name</span>
+              <input class="param-input" id="up-name" placeholder="auto from filename" />
+            </div>
+            <div class="param-row">
+              <span class="param-label" title="Pick which NVIDIA GPUs Triton should use for this uploaded model.">gpus</span>
+              <div class="upload-gpu-list" id="up-gpu-list">
+                <div class="model-check-empty">Connect to load GPU list</div>
+              </div>
+            </div>
+            <div class="param-row">
+              <span class="param-label" title="Export/inference input size. Larger can improve small objects but costs more latency and VRAM.">imgsz</span>
+              <input class="param-input" id="up-imgsz" value="640" style="width:80px;" />
+            </div>
+            <div class="param-row" style="align-items:flex-start;">
+              <span class="param-label" title="Optional labels to save right after upload. One label per line or comma separated.">labels</span>
+              <textarea class="param-input upload-labels" id="up-labels" placeholder="person&#10;helmet&#10;fire"></textarea>
+            </div>
+            <div class="grid-2" style="margin-bottom:10px;">
+              <div class="checkbox-row" title="Replace an existing model folder with the same name."><input type="checkbox" id="up-overwrite" /><label for="up-overwrite">overwrite</label></div>
+              <div class="checkbox-row" title="Export ONNX with dynamic batch/shape support where possible."><input type="checkbox" id="up-dynamic" checked /><label for="up-dynamic">dynamic ONNX</label></div>
+              <div class="checkbox-row" title="Enable YOLOE text prompt encoder inputs. Leave off for normal YOLO models."><input type="checkbox" id="up-yoloe" /><label for="up-yoloe">YOLOE 2-input</label></div>
+            </div>
+            <div class="progress-bar-wrap" id="upload-progress-wrap"><div class="progress-bar" id="upload-progress" style="width:0%"></div></div>
+            <button class="btn btn-primary btn-full" id="upload-btn" onclick="uploadModel()" disabled><span data-i18n="action.upload_export">UPLOAD &amp; EXPORT</span></button>
+          </div>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-header">
+          <span class="panel-title" data-i18n="panel.model_config">Model Config &amp; Labels</span>
+          <select class="param-input" id="cfg-model" onchange="loadConfig()" style="margin-left:auto;width:220px;"><option value="">— select model —</option></select>
+          <button class="btn btn-ghost" onclick="loadConfig()" style="padding:4px 10px;font-size:10px;">⟳ <span data-i18n="action.reload">Reload</span></button>
+        </div>
+        <div class="panel-body">
+          <div class="grid grid-cols-1 lg:grid-cols-[minmax(0,1.15fr)_minmax(280px,0.85fr)] gap-[16px]">
+            <div>
+              <div class="config-mode-tabs">
+                <button class="config-mode-btn active" id="cfg-easy-tab" onclick="setConfigMode('easy')">Easy GPU Setup</button>
+                <button class="config-mode-btn" id="cfg-custom-tab" onclick="setConfigMode('custom')">Custom Triton Config</button>
+              </div>
+              <div id="cfg-easy-pane">
+                <div class="simple-config-grid">
+                  <div class="simple-field">
+                    <label>Model name</label>
+                    <div style="display:flex;gap:6px;">
+                      <input class="param-input" id="simple-model-name" placeholder="Select a model" onkeydown="if(event.key==='Enter'){event.preventDefault();renameModel();}" />
+                      <button class="btn btn-primary" onclick="renameModel()" style="padding:4px 12px;font-size:11px;white-space:nowrap;font-weight:600;" title="Rename this model on disk and hot-reload in Triton">Rename</button>
+                    </div>
+                  </div>
+                  <div class="simple-field">
+                    <label title="Triton maximum batch size. Use 0 for no batching; higher can improve throughput but may add latency.">Max batch</label>
+                    <input class="param-input" id="simple-batch" type="number" min="0" step="1" value="0" title="Triton max_batch_size. Use 0 for no batching." />
+                  </div>
+                  <div class="simple-field">
+                    <label title="Number of Triton model instances to create per selected GPU or CPU target. More can increase throughput but uses more VRAM/CPU.">Instance count</label>
+                    <input class="param-input" id="simple-instance-count" type="number" min="1" step="1" value="1" title="Number of Triton model instances per selected GPU." />
+                  </div>
+                  <div class="simple-field">
+                    <label title="Where Triton should run this model instance: GPU for NVIDIA acceleration, CPU for compatibility.">Runtime target</label>
+                    <select class="param-input" id="simple-kind" onchange="toggleSimpleGpuList()">
+                      <option value="KIND_GPU">GPU</option>
+                      <option value="KIND_CPU">CPU</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="section-title" style="margin-top:12px;" title="Select which NVIDIA GPUs should host this model. Shows GPU specs and current model assignments.">GPU Assignment</div>
+                <div class="gpu-select-list" id="simple-gpu-list">
+                  <div class="empty-state" style="padding:12px;">Connect to load GPU info</div>
+                </div>
+                <div class="help-text">Easy mode writes <code>max_batch_size</code> and <code>instance_group</code>, then reloads the model in Triton.</div>
+                <div class="btn-row" style="margin-top:10px;">
+                  <button id="simple-save-btn" class="btn btn-primary" onclick="saveSimpleConfig()">Save &amp; Reload GPU</button>
+                  <button class="btn btn-ghost" onclick="loadConfig()">Reload</button>
+                </div>
+              </div>
+              <div id="cfg-custom-pane" style="display:none;">
+                <div class="section-title">Triton Config JSON</div>
+                <textarea class="code-editor" id="cfg-editor" placeholder="Select a model to load config…"></textarea>
+                <div class="help-text">Advanced mode edits parsed <code>config.pbtxt</code> directly. Use this for dynamic batching, input/output blocks, or special backend settings.</div>
+                <div class="btn-row" style="margin-top:8px;">
+                  <button class="btn btn-primary" onclick="saveConfig()">Save Custom Config</button>
+                  <button class="btn btn-ghost" onclick="loadConfig()">Reload</button>
+                </div>
+              </div>
+            </div>
+            <div>
+              <div class="section-title" title="Class name list. Row 0 is class ID 0, row 1 is class ID 1, and so on.">Labels</div>
+              <div class="labels-list" id="labels-list">
+                <div class="empty-state" style="padding:16px;">Select a model to load labels</div>
+              </div>
+              <div class="help-text">Labels map model class IDs to readable names. YOLOE models use text prompts instead of labels.</div>
+              <div class="btn-row" style="margin-top:10px;">
+                <button class="btn btn-ghost" onclick="addLabelRow()">+ Add Label</button>
+                <button class="btn btn-primary" onclick="saveLabels()" style="margin-left:auto;">Save Labels</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══ ENSEMBLE PAGE ═════════════════════════════════════════ -->
+    <div class="page" id="page-ensemble">
+      <div class="flex border-b border-secondary-highlight mb-4 gap-4 px-1">
+        <button class="px-3 py-2 text-xs font-semibold border-b-2 border-transparent text-primary-variant hover:text-primary transition-all duration-200" onclick="switchPage('models')">Models Config</button>
+        <button class="px-3 py-2 text-xs font-semibold border-b-2 border-selected text-primary transition-all duration-200" onclick="switchPage('ensemble')">Ensembles</button>
+        <button class="px-3 py-2 text-xs font-semibold border-b-2 border-transparent text-primary-variant hover:text-primary transition-all duration-200" onclick="switchPage('accounts')">Accounts</button>
+        <button class="px-3 py-2 text-xs font-semibold border-b-2 border-transparent text-primary-variant hover:text-primary transition-all duration-200" onclick="switchPage('system')">System Health</button>
+      </div>
+      <div class="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-[14px]">
+        <div class="panel">
+          <div class="panel-header">
+            <span class="panel-title" data-i18n="panel.active_ensembles">Active Ensembles</span>
+            <button class="btn btn-ghost" style="margin-left:auto;padding:4px 10px;" onclick="loadModels()">⟳ <span data-i18n="action.refresh">Refresh</span></button>
+          </div>
+          <div class="panel-body" style="padding:10px;">
+            <div class="models-grid" id="ensemble-grid">
+              <div class="empty-state"><div class="empty-icon">⬤</div>No ensembles configured</div>
+            </div>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-header"><span class="panel-title" id="ens-panel-title" data-i18n="panel.create_ensemble">Create Ensemble</span></div>
+          <div class="panel-body">
+            <div class="param-row">
+              <span class="param-label">name</span>
+              <input class="param-input" id="ens-name" placeholder="e.g. safety-stack" />
+            </div>
+            <div class="divider" style="margin:10px 0;"></div>
+            <div class="section-title" title="Models inside this ensemble. The ensemble runs these sub-models and merges their detections.">Steps (sub-models)</div>
+            <div class="ens-steps" id="ens-steps">
+              <div style="color:var(--text3);font-family:var(--font-mono);font-size:11px;padding:8px;">No steps added yet</div>
+            </div>
+            <div class="param-row" style="margin-top:10px;">
+              <select class="param-input" id="ens-step-select" style="flex:1;"><option value="">Add model…</option></select>
+              <button class="btn btn-ghost" onclick="addEnsStep()" style="padding:5px 12px;">+ Add</button>
+            </div>
+            <div style="margin-top:12px;">
+              <button class="btn btn-primary btn-full" id="ens-submit-btn" onclick="createEnsemble()">CREATE ENSEMBLE</button>
+              <button class="btn btn-ghost btn-full" id="ens-cancel-btn" onclick="cancelEnsembleEdit()" style="display:none;margin-top:6px;" data-i18n="action.cancel_edit">✕ Cancel edit</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══ SYSTEM PAGE ═══════════════════════════════════════════ -->
+    <div class="page" id="page-system">
+      <div class="flex border-b border-secondary-highlight mb-4 gap-4 px-1">
+        <button class="px-3 py-2 text-xs font-semibold border-b-2 border-transparent text-primary-variant hover:text-primary transition-all duration-200" onclick="switchPage('models')">Models Config</button>
+        <button class="px-3 py-2 text-xs font-semibold border-b-2 border-transparent text-primary-variant hover:text-primary transition-all duration-200" onclick="switchPage('ensemble')">Ensembles</button>
+        <button class="px-3 py-2 text-xs font-semibold border-b-2 border-transparent text-primary-variant hover:text-primary transition-all duration-200" onclick="switchPage('accounts')">Accounts</button>
+        <button class="px-3 py-2 text-xs font-semibold border-b-2 border-selected text-primary transition-all duration-200" onclick="switchPage('system')">System Health</button>
+      </div>
+      <div class="panel">
+        <div class="panel-header">
+          <span class="panel-title" data-i18n="panel.system_health">System Health</span>
+          <button class="btn btn-ghost" style="margin-left:auto;padding:4px 10px;" onclick="checkHealth()">⟳ <span data-i18n="action.refresh">Refresh</span></button>
+        </div>
+        <div class="panel-body">
+          <div class="health-grid" id="health-grid"><div class="empty-state">Not connected</div></div>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-header"><span class="panel-title" data-i18n="panel.gpu_info">GPU Info</span></div>
+        <div class="panel-body" style="padding:0;">
+          <table class="gpu-table">
+            <thead><tr><th>GPU</th><th>Name</th><th>VRAM</th><th>Models</th></tr></thead>
+            <tbody id="gpu-tbody"><tr><td colspan="4" style="text-align:center;color:var(--text3);padding:20px;">No GPU data</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-header">
+          <span class="panel-title" data-i18n="panel.system_monitor">System Monitor</span>
+          <div class="sysmon-rate">
+            <button class="sysmon-rate-btn" onclick="setSysmonInterval(1000)">1s</button>
+            <button class="sysmon-rate-btn" onclick="setSysmonInterval(5000)">5s</button>
+            <button class="sysmon-rate-btn active" onclick="setSysmonInterval(10000)">10s</button>
+          </div>
+          <button class="btn btn-ghost" style="padding:4px 10px;" onclick="loadSystemStatus()">⟳ <span data-i18n="action.refresh">Refresh</span></button>
+        </div>
+        <div class="panel-body">
+          <div class="sysmon-grid" id="sysmon-grid">
+            <div class="empty-state">Connect to load stats</div>
+          </div>
+          <div class="section-title" style="margin-top:6px;" data-i18n="panel.triton_stats">Triton Inference Stats</div>
+          <div id="triton-stats-wrap">
+            <div style="color:var(--text3);font-family:var(--font-mono);font-size:11px;padding:6px 0;">No stats loaded</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══ ACCOUNTS PAGE ═════════════════════════════════════════ -->
+    <div class="page" id="page-accounts">
+      <div class="flex border-b border-secondary-highlight mb-4 gap-4 px-1">
+        <button class="px-3 py-2 text-xs font-semibold border-b-2 border-transparent text-primary-variant hover:text-primary transition-all duration-200" onclick="switchPage('models')">Models Config</button>
+        <button class="px-3 py-2 text-xs font-semibold border-b-2 border-transparent text-primary-variant hover:text-primary transition-all duration-200" onclick="switchPage('ensemble')">Ensembles</button>
+        <button class="px-3 py-2 text-xs font-semibold border-b-2 border-selected text-primary transition-all duration-200" onclick="switchPage('accounts')">Accounts</button>
+        <button class="px-3 py-2 text-xs font-semibold border-b-2 border-transparent text-primary-variant hover:text-primary transition-all duration-200" onclick="switchPage('system')">System Health</button>
+      </div>
+      
+      <div class="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_360px] gap-[14px]">
+        <!-- LEFT: Accounts Table -->
+        <div class="panel">
+          <div class="panel-header">
+            <span class="panel-title">Manage Accounts</span>
+            <button class="btn btn-ghost" style="margin-left:auto;padding:4px 10px;" onclick="loadAccounts()">⟳ Refresh</button>
+          </div>
+          <div class="panel-body" style="padding: 0;">
+            <table class="gpu-table">
+              <thead>
+                <tr>
+                  <th style="padding-left:16px;">Username</th>
+                  <th>Role</th>
+                  <th style="text-align: right; padding-right: 16px;">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="accounts-tbody">
+                <!-- Populated dynamically -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+        
+        <!-- RIGHT: Create/Modify Form -->
+        <div class="panel">
+          <div class="panel-header">
+            <span class="panel-title" id="account-form-title">Create New Account</span>
+          </div>
+          <div class="panel-body">
+            <form id="account-manage-form" onsubmit="event.preventDefault(); submitAccountAction();" style="display: flex; flex-direction: column; gap: 12px;">
+              <div>
+                <label class="block text-[10px] font-semibold uppercase tracking-wider text-primary-variant mb-1">Username</label>
+                <input type="text" id="acc-username" class="w-full bg-background border border-secondary-highlight rounded-lg px-3 py-2 text-primary text-xs focus:outline-none focus:border-primary" placeholder="Enter username" required />
+              </div>
+              
+              <div>
+                <label class="block text-[10px] font-semibold uppercase tracking-wider text-primary-variant mb-1">Password</label>
+                <input type="password" id="acc-password" class="w-full bg-background border border-secondary-highlight rounded-lg px-3 py-2 text-primary text-xs font-mono focus:outline-none focus:border-primary" placeholder="Enter password" required />
+              </div>
+              
+              <div>
+                <label class="block text-[10px] font-semibold uppercase tracking-wider text-primary-variant mb-1">Role</label>
+                <input type="text" class="w-full bg-secondary border border-secondary-highlight rounded-lg px-3 py-2 text-primary-variant text-xs focus:outline-none" placeholder="admin" readonly title="New accounts receive admin role permissions by default." />
+              </div>
+              
+              <div id="acc-env-msg" class="text-[10px] text-primary-variant bg-secondary/30 p-2.5 rounded-lg border border-secondary-highlight hidden leading-normal">
+                <!-- Env variable setup warning message -->
+              </div>
+              
+              <div style="display: flex; gap: 8px; margin-top: 6px;">
+                <button type="submit" id="acc-submit-btn" class="btn btn-primary flex-1 py-1.5 font-bold">Create Account</button>
+                <button type="button" id="acc-cancel-btn" class="btn btn-ghost py-1.5 px-3 hidden" onclick="cancelAccountEdit()">Cancel</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══ TRACKING PAGE ═════════════════════════════════════════ -->
+    <div class="page" id="page-tracking">
+      <!-- 2-Window Sub-Tab Switcher Header -->
+      <div style="display:flex;gap:8px;border-bottom:1px solid var(--border);margin-bottom:14px;padding-bottom:8px;align-items:center;">
+        <button class="btn btn-primary" id="btn-subtab-tracking" onclick="switchTrkSubTab('tracking')" style="padding:6px 16px;font-size:12px;font-weight:600;display:inline-flex;align-items:center;gap:6px;">
+          <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+          <span>Tracked Objects</span>
+        </button>
+        <button class="btn btn-ghost" id="btn-subtab-recordings" onclick="switchTrkSubTab('recordings')" style="padding:6px 16px;font-size:12px;font-weight:600;display:inline-flex;align-items:center;gap:6px;">
+          <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+          <span>Manage Recordings</span>
+        </button>
+      </div>
+
+      <!-- WINDOW 1: Tracked Objects (Track & Search) -->
+      <div id="win-tracking-objects">
+        <!-- Top toolbar -->
+        <div class="stream-toolbar" style="flex-wrap:wrap;gap:6px;">
+          <span class="stream-toolbar-label">Object Tracking</span>
+          <div style="display:flex;align-items:center;gap:6px;flex:1;flex-wrap:wrap;">
+            <select class="param-input" id="trk-class-filter" onchange="loadTracked()" style="width:130px;font-size:11px;">
+              <option value="">All classes</option>
+            </select>
+            <select class="param-input" id="trk-session-filter" onchange="loadTracked()" style="width:180px;font-size:11px;">
+              <option value="all">All sessions</option>
+              <option value="admin">Admin session</option>
+            </select>
+            <span id="trk-count" style="font-family:var(--font-mono);font-size:11px;color:var(--text3);"></span>
+          </div>
+          <button class="btn btn-primary" onclick="openTrkImageSearchModal()" style="padding:4px 12px;font-size:11px;display:flex;align-items:center;gap:4px;">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+              <path stroke-linecap="round" stroke-linejoin="round" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+            <span>Photo Search</span>
+          </button>
+          <button class="btn btn-ghost" onclick="loadTracked()" style="padding:4px 10px;font-size:10px;display:inline-flex;align-items:center;gap:4px;">
+            <svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+            <span>Refresh</span>
+          </button>
+          <button class="btn btn-danger" id="trk-clear-btn" onclick="clearAllTracked()" style="padding:4px 10px;font-size:10px;display:none;">Clear All</button>
+        </div>
+
+        <div style="margin-top:14px;">
+          <!-- LEFT: Gallery -->
+          <div class="panel" style="min-height:400px;">
+            <div class="panel-header">
+              <span class="panel-title">Tracked Objects Gallery</span>
+              <span id="trk-gallery-label" style="margin-left:auto;font-family:var(--font-mono);font-size:10px;color:var(--text3);"></span>
+              <button class="btn btn-ghost" id="trk-select-all-btn" onclick="trkToggleSelectAll()" style="padding:2px 8px;font-size:10px;margin-left:8px;display:none;">Select All</button>
+            </div>
+            <!-- Selection action bar -->
+            <div id="trk-sel-bar" style="display:none;padding:8px 12px;background:rgba(239,68,68,.05);border-bottom:1px solid var(--border);align-items:center;gap:8px;flex-wrap:wrap;">
+              <span id="trk-sel-count" style="font-family:var(--font-sans);font-size:11px;font-weight:600;color:var(--text);">0 selected</span>
+              <button class="btn btn-danger" onclick="trkDeleteSelected()" style="padding:3px 10px;font-size:10px;">Delete Selected</button>
+              <button class="btn btn-ghost" onclick="trkClearSelection()" style="padding:3px 10px;font-size:10px;margin-left:auto;">Deselect All</button>
+            </div>
+            <div class="panel-body" style="padding:10px;">
+              <div id="trk-gallery" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;">
+                <div class="empty-state">No tracked objects yet.<br><span style="font-size:10px;color:var(--text3);">Start a stream with a detection model to populate.</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- WINDOW 2: Manage Recordings (STANDALONE PANEL) -->
+      <div id="win-manage-recordings" style="display:none;">
+        <div class="panel" style="min-height:500px;">
+          <div class="panel-header" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:12px 16px;">
+            <span class="panel-title" style="font-weight:700;color:var(--color-primary);font-size:14px;">Server Video Recordings</span>
+            
+            <div style="display:flex;align-items:center;gap:10px;margin-left:auto;flex-wrap:wrap;">
+              <label style="display:inline-flex;align-items:center;gap:6px;font-size:11px;cursor:pointer;user-select:none;color:var(--text2);">
+                <input type="checkbox" id="rec-select-all-chk" onchange="recToggleSelectAll(this.checked)" style="cursor:pointer;accent-color:#10b981;" />
+                <span style="font-weight:600;">Select All</span>
+              </label>
+
+              <button class="btn btn-danger" id="rec-delete-selected-btn" onclick="recDeleteSelected()" style="padding:4px 12px;font-size:11px;display:inline-flex;align-items:center;gap:6px;" disabled>
+                <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                <span>Delete Selected (<span id="rec-sel-count">0</span>)</span>
+              </button>
+
+              <button class="btn btn-ghost" onclick="loadManageRecordings()" style="padding:4px 10px;font-size:11px;display:inline-flex;align-items:center;gap:4px;">
+                <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                <span>Refresh</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Total size summary bar -->
+          <div style="padding:8px 16px;background:var(--color-background-alt);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;font-size:11px;color:var(--text3);font-family:var(--font-mono);">
+            <span id="rec-summary-count">0 recordings found</span>
+            <span id="rec-summary-size">0 MB total</span>
+          </div>
+
+          <div class="panel-body" style="padding:16px;display:flex;gap:16px;flex-direction:column;min-height:400px;">
+            <div style="display:flex;gap:16px;width:100%;flex-wrap:wrap;">
+              
+              <!-- Left Side: List of Recordings -->
+              <div style="flex:1;min-width:300px;display:flex;flex-direction:column;gap:8px;" id="rec-list-container">
+                <div style="text-align:center;padding:24px;color:var(--text3);" id="rec-list-loading">Loading recordings…</div>
+              </div>
+
+              <!-- Right Side: Integrated Video Player Window -->
+              <div style="flex:1;min-width:320px;max-width:540px;display:flex;flex-direction:column;gap:8px;background:var(--color-background-alt);border:1px solid var(--border);border-radius:var(--radius);padding:12px;align-self:flex-start;">
+                <div style="font-size:12px;font-weight:700;color:var(--text2);display:flex;align-items:center;gap:6px;">
+                  <svg class="h-4 w-4 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/><path stroke-linecap="round" stroke-linejoin="round" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                  <span>Video Preview</span>
+                  <span id="rec-preview-title" style="font-size:10px;font-weight:normal;color:var(--text3);margin-left:auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:240px;">Select a clip to play</span>
+                </div>
+                <video id="rec-integrated-player" controls style="width:100%;aspect-ratio:16/9;background:#000;border-radius:4px;border:1px solid var(--border);display:block;"></video>
+              </div>
+
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- ══ API KEYS PAGE (Admin Keys Manager) ═══════════════════ -->
+    <div class="page" id="page-keys">
+      <div class="admin-keys-container">
+        <div class="admin-keys-header">
+          <div>
+            <h1 class="admin-keys-title">API Keys</h1>
+            <p class="admin-keys-subtitle">Manage secret keys used to authenticate requests to the Triton Inference Server. Do not expose keys in browser client side scripts.</p>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <button class="btn btn-connect text-xs font-bold" onclick="openCreateKeyModal()">+ Create new secret key</button>
+            <button
+              id="keys-refresh-btn"
+              class="btn btn-ghost text-xs font-medium border border-secondary-highlight px-3 py-1.5 flex items-center gap-1.5 hover:bg-secondary transition-colors"
+              onclick="refreshApiKeys()"
+              title="Refresh key stats"
+            >
+              <svg id="keys-refresh-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;">
+                <path d="M21 12a9 9 0 0 1-15.5 6.2"/>
+                <path d="M3 12A9 9 0 0 1 18.5 5.8"/>
+                <path d="M18 2v4h-4"/>
+                <path d="M6 22v-4h4"/>
+              </svg>
+              Refresh
+            </button>
+          </div>
+        </div>
+
+
+
+        <!-- Metric Cards Bar -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-5">
+          <div class="p-4 rounded-xl border border-secondary-highlight bg-background_alt shadow-sm flex items-center justify-between">
+            <div>
+              <div class="text-xs text-primary-variant font-medium uppercase tracking-wider">Active Secret Keys</div>
+              <div id="stat-active-keys" class="text-2xl font-bold font-mono text-primary mt-1">0</div>
+            </div>
+            <div class="p-2.5 rounded-lg bg-selected/10 text-selected">
+              <svg viewBox="0 0 24 24" class="size-6 fill-none stroke-current stroke-2" stroke-linecap="round" stroke-linejoin="round"><path d="M15.75 5.25a3 3 0 013 3m3 0a6 6 0 01-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1121.75 8.25z" /></svg>
+            </div>
+          </div>
+
+          <div class="p-4 rounded-xl border border-secondary-highlight bg-background_alt shadow-sm flex items-center justify-between">
+            <div>
+              <div class="text-xs text-primary-variant font-medium uppercase tracking-wider">Total API Requests</div>
+              <div id="stat-total-calls" class="text-2xl font-bold font-mono text-primary mt-1">0</div>
+            </div>
+            <div class="p-2.5 rounded-lg bg-green-500/10 text-green-500">
+              <svg viewBox="0 0 24 24" class="size-6 fill-none stroke-current stroke-2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+            </div>
+          </div>
+
+          <div class="p-4 rounded-xl border border-secondary-highlight bg-background_alt shadow-sm flex items-center justify-between">
+            <div>
+              <div class="text-xs text-primary-variant font-medium uppercase tracking-wider">Most Recent Activity</div>
+              <div id="stat-last-activity" class="text-2xl font-bold font-mono text-primary mt-1">Never</div>
+            </div>
+            <div class="p-2.5 rounded-lg bg-amber-500/10 text-amber-500">
+              <svg viewBox="0 0 24 24" class="size-6 fill-none stroke-current stroke-2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+            </div>
+          </div>
+        </div>
+
+        <div class="admin-keys-table-card">
+          <table class="admin-keys-table">
+            <thead>
+              <tr>
+                <th class="admin-keys-th">Name</th>
+                <th class="admin-keys-th">Secret Key</th>
+                <th class="admin-keys-th">Created By</th>
+                <th class="admin-keys-th">Scopes</th>
+                <th class="admin-keys-th">Allowed Models</th>
+                <th class="admin-keys-th">Usage / Requests</th>
+                <th class="admin-keys-th">Last Used</th>
+                <th class="admin-keys-th">Created</th>
+                <th class="admin-keys-th">Expires</th>
+                <th class="admin-keys-th" style="text-align:right;">Action</th>
+              </tr>
+            </thead>
+            <tbody id="keys-table-body">
+              <!-- Dynamically populated -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- end #main -->
+</main>
+
+<!-- ─── ADD STREAM MODAL ──────────────────────────────────── -->
+<div id="add-stream-modal">
+  <div class="modal w-[540px]">
+    <div class="modal-title" id="add-stream-title">Add Stream</div>
+
+    <div class="param-row">
+      <span class="param-label">name</span>
+      <input class="param-input" id="ns-name" placeholder="e.g. Front Camera" style="flex:1;" />
+    </div>
+
+    <div id="ns-source-row" class="param-row">
+      <span class="param-label">source</span>
+      <select class="param-input" id="ns-source" onchange="onSourceChange()" style="flex:1;">
+        <option value="webcam">Webcam</option>
+        <option value="file">Video File</option>
+        <option value="rtsp">RTSP Camera</option>
+        <option value="ws">WebSocket / RTSP Proxy</option>
+        <option value="hls">HLS Stream</option>
+      </select>
+    </div>
+
+    <div id="ns-rtsp-row" class="param-row" style="display:none;">
+      <span class="param-label">rtsp url</span>
+      <input class="param-input" id="ns-rtsp-url" placeholder="rtsp://user:pass@192.168.1.x:554/stream1" style="flex:1;" />
+      <button class="btn btn-ghost" onclick="probeRtsp()" style="padding:6px 10px;font-size:10px;">Probe</button>
+    </div>
+
+    <div id="ns-rtsp-backend-row" class="param-row" style="display:none;">
+      <span class="param-label" title="RTSP reader backend. Auto uses the API default.">backend</span>
+      <select class="param-input" id="ns-rtsp-backend-select" style="flex:1;" title="Use Auto unless you are testing a specific backend.">
+        <option value="auto">Auto</option>
+        <option value="gstreamer">GStreamer</option>
+        <option value="opencv">OpenCV / FFmpeg</option>
+      </select>
+    </div>
+
+    <div id="ns-ws-row" class="param-row" style="display:none;">
+      <span class="param-label">ws url</span>
+      <input class="param-input" id="ns-ws-url" placeholder="ws://192.168.1.x:8888/stream/" style="flex:1;" />
+    </div>
+
+    <div id="ns-hls-row" class="param-row" style="display:none;">
+      <span class="param-label">hls url</span>
+      <input class="param-input" id="ns-hls-url" placeholder="http://server:8888/stream/index.m3u8" style="flex:1;" />
+    </div>
+
+    <div id="ns-webcam-row" class="param-row" style="display:none;">
+      <span class="param-label">device</span>
+      <select class="param-input" id="ns-webcam-device" style="flex:1;"><option value="">Default Camera</option></select>
+    </div>
+
+    <div id="ns-file-row" class="param-row" style="display:none;">
+      <span class="param-label">file</span>
+      <button class="btn btn-ghost" onclick="document.getElementById('ns-file-input').click()" style="flex:1;"><span class="btn-icon"><svg class="line-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h6l2 2h10v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6z"></path></svg></span>Choose video file</button>
+      <input type="file" id="ns-file-input" accept="video/*" style="display:none" onchange="onFileSelect(event)" />
+      <span id="ns-file-label" style="font-family:var(--font-mono);font-size:10px;color:var(--text3);margin-left:8px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></span>
+    </div>
+
+
+
+    <div class="divider" style="margin:12px 0;"></div>
+
+    <div class="param-row">
+      <span class="param-label">models</span>
+      <div class="relative w-full" id="ns-model-select-wrap">
+        <button type="button" class="param-input flex items-center justify-between w-full text-left cursor-pointer" id="ns-model-select-btn" onclick="toggleModelDropdown('ns', event)">
+          <span class="truncate text-xs font-mono text-primary" id="ns-model-select-label">Select models...</span>
+          <svg class="h-4 w-4 text-primary-variant transition-transform duration-200" id="ns-model-select-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+        </button>
+        <div id="ns-model-select-menu" style="display:none; position:absolute !important; top:100%; left:0; right:0; margin-top:4px; z-index:9999; background:var(--bg2); border:1px solid var(--border); border-radius:var(--radius); box-shadow:0 10px 25px -5px rgba(0,0,0,0.5); padding:8px; max-height:220px; overflow-y:auto; flex-direction:column; gap:4px;" onclick="event.stopPropagation()">
+          <div class="flex items-center justify-between pb-1.5 mb-1 border-b border-secondary-highlight px-1">
+            <span class="text-[10px] font-mono text-primary-variant uppercase tracking-wider" id="ns-model-count">0 selected</span>
+            <div class="flex gap-1.5">
+              <button type="button" class="text-[10px] font-semibold text-primary-variant hover:text-primary px-1.5 py-0.5 rounded hover:bg-secondary transition-colors" onclick="selectAllAddStreamModels(true)">All</button>
+              <button type="button" class="text-[10px] font-semibold text-primary-variant hover:text-primary px-1.5 py-0.5 rounded hover:bg-secondary transition-colors" onclick="selectAllAddStreamModels(false)">None</button>
+            </div>
+          </div>
+          <div class="flex flex-col gap-0.5" id="ns-model-list">
+            <span class="model-check-empty text-xs font-mono text-primary-variant p-1">No models — connect first</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="param-row">
+      <span class="param-label">classes</span>
+      <input class="param-input" id="ns-classes" placeholder="YOLOE only: person,car" style="flex:1;" />
+    </div>
+    <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-2">
+      <div>
+        <div class="section-title" style="margin-bottom:4px;">imgsz</div>
+        <input class="param-input" id="ns-imgsz" value="640" style="width:100%;" />
+      </div>
+      <div>
+        <div class="section-title" style="margin-bottom:4px;">conf</div>
+        <input class="param-input" id="ns-conf" type="number" min="0" max="1" step="0.05" value="0.5" style="width:100%;" />
+      </div>
+      <div>
+        <div class="section-title" style="margin-bottom:4px;" title="Inference FPS cap. For RTSP Camera mode, API samples this many frames per second from the camera for detection.">infer fps</div>
+        <input class="param-input" id="ns-fps" type="number" min="1" max="240" value="30" onchange="clampFpsInput(this, 10, true)" style="width:100%;" title="Custom FPS cap. Clamped to API max_fps." />
+        <div id="ns-fps-limit" style="font-family:var(--font-mono);font-size:9px;color:var(--text3);margin-top:3px;">API max: unlimited</div>
+      </div>
+      <div id="ns-preview-fps-wrap">
+        <div class="section-title" style="margin-bottom:4px;" title="RTSP preview FPS cap sent from API back to this browser. Actual FPS can be lower if the camera read, annotation, JPEG encode, browser decode, or network is slower.">preview cap</div>
+        <input class="param-input" id="ns-preview-fps" type="number" min="1" max="240" value="10" onchange="clampFpsInput(this, 10, true)" style="width:100%;" title="RTSP preview FPS. Lower saves browser download bandwidth." />
+      </div>
+    </div>
+
+    <div id="ns-source-size-row" class="param-row" style="display:none;">
+      <span class="param-label" title="Working resolution for the API RTSP worker. Lower values reduce JPEG/inference cost and can improve FPS/latency.">source size</span>
+      <select class="param-input" id="ns-source-max-height" style="flex:1;">
+        <option value="0">Native</option>
+        <option value="512">512p</option>
+        <option value="640">640p</option>
+        <option value="720" selected>720p</option>
+        <option value="960">960p</option>
+        <option value="1080">1080p</option>
+        <option value="1440">1440p</option>
+      </select>
+    </div>
+
+    <div class="param-row" style="margin-bottom:8px;">
+      <span class="param-label" title="Exact Boxes uses server-annotated inference frames. Native FPS Live shows the newest source frame and draws the latest JSON in the browser.">overlay</span>
+      <select class="param-input" id="ns-overlay-mode" style="flex:1;" onchange="onStreamOverlayModeChange()">
+        <option value="exact" selected data-i18n="option.exact_latency">Exact Boxes - good latency</option>
+        <option value="native_exact" data-i18n="option.native_exact">Native FPS Live - JSON overlay</option>
+      </select>
+    </div>
+
+    <div id="ns-annotated-preview-wrap" class="param-row" style="display:none!important;margin-bottom:8px;">
+      <span class="param-label" data-dyn-label="Exact Boxes" title="Exact Boxes draws boxes/masks on the same frame used for inference. Best alignment for fast objects; visual preview can be delayed by inference latency.">Exact Boxes</span>
+      <label style="font-family:var(--font-mono);font-size:10px;color:var(--text2);display:flex;align-items:center;gap:6px;flex:1;">
+        <input type="checkbox" id="ns-annotated-preview" checked />
+        <span data-dyn-label="Use exact inference frame for boxes and masks" title="Exact-frame mode keeps boxes/masks on the frame used for inference.">Use exact inference frame for boxes and masks</span>
+      </label>
+    </div>
+
+    <div id="ns-box-sync-wrap" class="param-row" style="display:none!important;margin-bottom:8px;">
+      <span class="param-label" data-dyn-label="Exact Boxes" title="Exact Boxes draws boxes/masks on the same frame sent to inference. Better for fast vehicles/people; off uses the newest live frame.">Exact Boxes</span>
+      <label style="font-family:var(--font-mono);font-size:10px;color:var(--text2);display:flex;align-items:center;gap:6px;flex:1;">
+        <input type="checkbox" id="ns-box-sync" />
+        <span data-dyn-label="Use exact inference frame for boxes and masks" title="Exact-frame mode keeps boxes/masks on the frame used for inference.">Use exact inference frame for boxes and masks</span>
+      </label>
+    </div>
+
+    <!-- Tracking toggle (RTSP only) -->
+    <div id="ns-tracking-row" class="param-row" style="display:none;margin-bottom:8px;">
+      <span class="param-label" title="Enable ByteTrack object tracking + Re-ID embedding. Assigns persistent IDs to detected objects and stores them for cross-camera search. Has a small CPU cost per frame.">tracking</span>
+      <label style="font-family:var(--font-mono);font-size:10px;color:var(--text2);display:flex;align-items:center;gap:6px;flex:1;">
+        <input type="checkbox" id="ns-enable-tracking" />
+        <span title="When enabled, track_id labels appear on detection boxes and objects are indexed in the Tracking gallery.">Enable ByteTrack + Re-ID</span>
+      </label>
+    </div>
+
+    <!-- Recording toggle (RTSP only) -->
+    <div id="ns-recording-row" class="param-row" style="display:none;margin-bottom:8px;">
+      <span class="param-label" title="Enable clean server-side video recording (without bounding boxes) on the server.">recording</span>
+      <label style="font-family:var(--font-mono);font-size:10px;color:var(--text2);display:flex;align-items:center;gap:6px;flex:1;">
+        <input type="checkbox" id="ns-enable-recording" />
+        <span title="When enabled, the server records the direct video stream in MP4 format.">Enable Server-Side Direct Recording</span>
+      </label>
+    </div>
+
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeAddStream()">Cancel</button>
+      <button class="btn btn-primary" onclick="addStream()">▶ Start Stream</button>
+    </div>
+  </div>
+</div>
+
+<!-- ─── CONFIRM MODAL ─────────────────────────────────────── -->
+<div id="modal-overlay">
+  <div class="modal">
+    <div class="modal-title" id="modal-title">Confirm</div>
+    <div id="modal-body"></div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-danger" id="modal-confirm-btn">Confirm</button>
+    </div>
+  </div>
+</div>
+
+<!-- ─── LIGHTBOX MODAL ────────────────────────────────────── -->
+<div id="trk-lightbox-modal" style="display:none;position:fixed;inset:0;z-index:100;background:rgba(10,11,12,.9);align-items:center;justify-content:center;padding:16px;" onclick="trkCloseLightbox()">
+  <div class="panel" style="max-width:1200px;width:95%;height:90vh;background:var(--color-background);border:1px solid var(--border);position:relative;display:flex;flex-direction:row;box-shadow:var(--shadow-lg);overflow:hidden;" onclick="event.stopPropagation()">
+    
+    <!-- Close button -->
+    <button class="btn btn-ghost" onclick="trkCloseLightbox()" style="position:absolute;top:12px;right:12px;padding:4px 8px;font-size:12px;z-index:10;">✕</button>
+
+    <!-- LEFT COLUMN redesigned: nav arrows + keyframe strip + trail canvas -->
+    <div style="flex:7;display:flex;flex-direction:column;border-right:1px solid var(--border);background:#08090a;position:relative;min-width:0;height:100%;">
+
+      <!-- Top bar: title + frame nav -->
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 16px;border-bottom:1px solid var(--border);flex-shrink:0;">
+        <div style="font-size:10px;font-weight:700;color:var(--color-primary);font-family:var(--font-mono);" id="trk-lightbox-title">INVESTIGATION VIEW</div>
+        <div style="display:none;align-items:center;gap:8px;">
+          <span id="trk-frame-badge" style="display:none;">FRAME 1/1</span>
+          <button onclick="trkNavFrame(-1)" id="trk-nav-prev" style="display:none;"></button>
+          <button onclick="trkNavFrame(1)"  id="trk-nav-next" style="display:none;"></button>
+        </div>
+      </div>
+
+      <!-- Frame type label (Hidden) -->
+      <div style="display:none;text-align:center;padding:5px 0 0;flex-shrink:0;">
+        <span id="trk-frame-type-label" style="display:none;"></span>
+      </div>
+
+      <!-- Main image (fills remaining vertical space) -->
+      <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:8px 20px;min-height:0;overflow:hidden;">
+        <div id="trk-lightbox-view-container" style="position:relative;max-width:100%;max-height:100%;border:1px solid var(--border);border-radius:4px;overflow:hidden;background:#000;display:flex;align-items:center;justify-content:center;">
+          <img id="trk-lightbox-img" style="max-width:100%;max-height:100%;object-fit:contain;display:block;" />
+          <canvas id="trk-trail-overlay" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;"></canvas>
+          <div id="trk-lightbox-rect" style="position:absolute;border:2px solid #ef4444;box-shadow:0 0 8px rgba(239,68,68,0.5);display:none;pointer-events:none;box-sizing:border-box;">
+            <span id="trk-lightbox-rect-label" style="position:absolute;top:-18px;left:-2px;background:#ef4444;color:#fff;font-family:var(--font-mono);font-size:9px;font-weight:700;padding:1px 4px;border-radius:2px;white-space:nowrap;text-transform:uppercase;">PERSON</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Scrubber (Hidden) -->
+      <div style="display:none;flex-shrink:0;padding:6px 16px 10px;">
+        <div id="trk-scrubber" style="display:none;">
+          <div id="trk-scrubber-fill" style="display:none;"></div>
+          <div id="trk-scrubber-dot" style="display:none;"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT COLUMN: Metadata, Map, Player, Trajectory list -->
+
+    <div class="scrollbar-hidden" style="flex:5;display:flex;flex-direction:column;padding:24px;overflow-y:auto;gap:14px;min-width:0;height:100%;background:var(--color-background);">
+      <!-- Header -->
+      <div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <div id="trk-lightbox-badge" style="background:#4f46e5;color:#fff;font-family:var(--font-mono);font-size:10px;padding:2px 6px;border-radius:3px;font-weight:700;text-transform:uppercase;width:fit-content;">PERSON</div>
+          <div style="font-size:16px;font-weight:700;color:var(--text1);" id="trk-lightbox-id">PER-XXXXXX</div>
+        </div>
+        <div style="font-size:11px;color:var(--text3);margin-top:4px;">Target Activity Timeline & Similar Detections</div>
+      </div>
+
+      <!-- Metadata Fields -->
+      <div style="font-size:11px;color:var(--text3);display:grid;grid-template-columns:1fr 1fr;gap:8px 12px;font-family:var(--font-mono);border-top:1px solid var(--border);border-bottom:1px solid var(--border);padding:10px 0;">
+        <div>Camera: <span id="trk-lightbox-cam" style="color:var(--text2);font-weight:700;"></span></div>
+        <div>Detected: <span id="trk-lightbox-time" style="color:var(--text2);"></span></div>
+        <div>Dwell Duration: <span id="trk-lightbox-dwell" style="color:var(--text2);"></span></div>
+        <div>Events Count: <span id="trk-lightbox-events" style="color:var(--text2);"></span></div>
+      </div>
+
+      <!-- Space-Time Trajectory List (Hidden) -->
+      <div id="trk-detail-timeline-wrap" style="display:none!important;flex-direction:column;gap:6px;background:var(--color-background-alt);border:1px solid var(--border);border-radius:var(--radius);padding:10px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;">
+          <span style="font-size:10px;font-weight:700;color:var(--color-primary);text-transform:uppercase;letter-spacing:0.5px;">🕒 Sighting Timeline & Sessions</span>
+          <span style="font-size:9px;color:var(--text3);">Click a session to view frame & path</span>
+        </div>
+        <div id="trk-detail-cam-tabs" style="display:none;gap:6px;flex-wrap:wrap;margin:4px 0 2px;"></div>
+        <div id="trk-detail-results-list" style="display:flex;flex-direction:column;gap:6px;max-height:240px;min-height:100px;overflow-y:auto;padding-right:4px;">
+          <!-- Trajectory nodes populated here -->
+        </div>
+      </div>
+
+      <!-- Video Player Section -->
+      <div id="trk-detail-player-wrap" style="display:none;flex-direction:column;gap:6px;border:1px solid var(--border);border-radius:var(--radius);padding:10px;background:var(--color-background-alt);">
+        <div style="font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:0.5px;">Video Event Player</div>
+        <video id="trk-detail-player" controls style="width:100%;aspect-ratio:16/9;background:#000;border-radius:4px;border:1px solid var(--border);"></video>
+      </div>
+
+      <!-- Similar Objects Section -->
+      <div id="trk-detail-similar-wrap" style="background:var(--color-background-alt);border:1px solid var(--border);border-radius:var(--radius);padding:10px;display:flex;flex-direction:column;gap:6px;">
+        <div style="font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:0.5px;">Similar Detections</div>
+        <div id="trk-detail-similar-list" style="display:flex;flex-direction:column;gap:6px;max-height:130px;overflow-y:auto;padding-right:4px;">
+          <!-- Similar objects listed here -->
+        </div>
+      </div>
+
+    </div>
+
+  </div>
+</div>
+
+<!-- ─── CLIPS MODAL ───────────────────────────────────────── -->
+<div id="trk-clips-modal" style="display:none;position:fixed;inset:0;z-index:90;background:rgba(10,11,12,.85);align-items:center;justify-content:center;padding:16px;" onclick="closeClipsModal()">
+  <div class="panel" style="max-width:500px;width:100%;max-height:80vh;background:var(--color-background);border:1px solid var(--border);position:relative;display:flex;flex-direction:column;padding:16px;box-shadow:var(--shadow-lg);" onclick="event.stopPropagation()">
+    <button class="btn btn-ghost" onclick="closeClipsModal()" style="position:absolute;top:10px;right:10px;padding:4px 8px;font-size:12px;">✕</button>
+    <div style="font-size:14px;font-weight:700;color:var(--color-primary);margin-bottom:12px;" id="trk-clips-title">Recorded Clips</div>
+    <video id="trk-clip-player" controls style="width:100%;aspect-ratio:16/9;background:#000;border-radius:4px;display:none;margin-bottom:12px;border:1px solid var(--border);"></video>
+    <div class="scrollbar-hidden" style="overflow-y:auto;flex:1;min-height:0;display:flex;flex-direction:column;gap:8px;" id="trk-clips-list">
+      <!-- Clips listed here -->
+    </div>
+  </div>
+</div>
+
+<!-- ─── IMAGE SEARCH MODAL ──────────────────────────────── -->
+<div id="trk-img-search-modal" style="display:none;position:fixed;inset:0;z-index:90;background:rgba(0,0,0,0.75);backdrop-filter:blur(4px);overflow-y:auto;padding:20px 16px;justify-content:center;align-items:flex-start;" onclick="closeTrkImageSearchModal()">
+  <div class="panel" style="max-width:520px;width:100%;max-height:calc(100vh - 40px);overflow-y:auto;margin:auto;background:var(--color-background-alt, var(--bg2));border:1px solid var(--border);position:relative;display:flex;flex-direction:column;padding:24px;box-shadow:0 25px 50px -12px rgba(0,0,0,0.5);border-radius:14px;color:var(--color-primary);" onclick="event.stopPropagation()">
+    <button class="btn btn-ghost" onclick="closeTrkImageSearchModal()" style="position:absolute;top:14px;right:14px;padding:4px 8px;font-size:12px;color:var(--primary-variant);">
+      <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+    </button>
+    
+    <div style="font-size:16px;font-weight:700;color:var(--color-primary);margin-bottom:4px;display:flex;align-items:center;gap:10px;">
+      <div style="background:rgba(16,163,127,0.15);color:#10a37f;padding:6px;border-radius:8px;">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+          <path stroke-linecap="round" stroke-linejoin="round" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+        </svg>
+      </div>
+      <span>Search Objects by Photo (Re-ID)</span>
+    </div>
+    <p style="font-size:11px;color:var(--primary-variant);margin-bottom:16px;line-height:1.4;">
+      Upload & crop target object (person or vehicle) to execute vector similarity search across Qdrant database.
+    </p>
+
+    <!-- Image Drop Zone & Preview -->
+    <div id="trk-drop-zone" onclick="if(!document.getElementById('trk-search-preview-wrap') || document.getElementById('trk-search-preview-wrap').style.display === 'none') document.getElementById('trk-search-file-input').click();" ondragover="event.preventDefault(); this.style.borderColor='#10a37f';" ondragleave="this.style.borderColor='var(--border)';" ondrop="event.preventDefault(); this.style.borderColor='var(--border)'; handleTrkDropFile(event);" style="border:2px dashed var(--border);border-radius:10px;padding:16px;text-align:center;background:var(--secondary);transition:all .2s;margin-bottom:16px;position:relative;cursor:pointer;">
+      <input type="file" id="trk-search-file-input" accept="image/*" style="display:none" onchange="handleTrkFileSelect(event)" />
+      
+      <div id="trk-search-placeholder" style="display:flex;flex-direction:column;align-items:center;padding:16px 0;">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8 text-primary-variant mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+        </svg>
+        <div style="font-size:12px;font-weight:600;color:var(--color-primary);margin-bottom:2px;">Click or drag & drop target photo here</div>
+        <div style="font-size:10px;color:var(--primary-variant);">Supports JPG, PNG, WEBP</div>
+      </div>
+
+      <!-- Preview Container with Interactive Canvas Cropper -->
+      <div id="trk-search-preview-wrap" style="display:none;flex-direction:column;align-items:center;gap:10px;width:100%;" onclick="event.stopPropagation();">
+        <!-- Interactive Cropper Canvas Box -->
+        <div id="trk-cropper-box" onclick="event.stopPropagation();" style="position:relative;width:100%;max-height:260px;background:#000;border-radius:8px;overflow:hidden;display:flex;align-items:center;justify-content:center;user-select:none;touch-action:none;border:1px solid var(--border);">
+          <canvas id="trk-crop-canvas" onclick="event.stopPropagation();" style="max-height:260px;max-width:100%;cursor:crosshair;display:block;"></canvas>
+        </div>
+
+        <!-- Cropper Toolbar & Details -->
+        <div style="display:flex;align-items:center;justify-content:space-between;width:100%;font-size:11px;">
+          <div style="display:flex;gap:6px;">
+            <button type="button" class="btn btn-ghost" onclick="event.stopPropagation(); resetTrkCrop();" style="padding:3px 8px;font-size:10px;">⟲ Reset Crop</button>
+            <button type="button" class="btn btn-ghost" onclick="event.stopPropagation(); clearTrkCropFile();" style="padding:3px 8px;font-size:10px;color:var(--color-danger, #ef4444);">✕ Remove Photo</button>
+          </div>
+          <span id="trk-crop-info" style="color:var(--primary-variant);font-family:var(--font-mono);font-size:10px;">Full Image</span>
+        </div>
+
+        <div style="display:flex;align-items:center;gap:10px;width:100%;background:var(--bg1, var(--color-background));padding:8px 12px;border-radius:6px;border:1px solid var(--border);">
+          <img id="trk-search-preview" style="height:42px;width:42px;border-radius:4px;object-fit:cover;border:1.5px solid #10a37f;flex-shrink:0;" />
+          <div style="display:flex;flex-direction:column;min-width:0;flex:1;text-align:left;">
+            <span style="font-size:11px;font-weight:600;color:var(--color-primary);">Cropped Target Preview</span>
+            <span style="font-size:10px;color:var(--primary-variant);font-family:var(--font-mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px;" id="trk-search-filename"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Similarity Threshold Slider -->
+    <div style="margin-bottom:16px;background:var(--secondary);padding:12px 14px;border-radius:10px;border:1px solid var(--border);">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+        <label style="font-size:11px;font-weight:600;color:var(--color-primary);" data-i18n="tracking.similarity_threshold">Similarity Threshold:</label>
+        <span id="trk-threshold-val" style="font-family:var(--font-mono);font-size:13px;font-weight:700;color:#10a37f;background:rgba(16,163,127,0.12);padding:2px 8px;border-radius:6px;">70%</span>
+      </div>
+      <input type="range" id="trk-search-threshold" min="0.50" max="0.95" step="0.01" value="0.70" oninput="document.getElementById('trk-threshold-val').textContent = Math.round(this.value * 100) + '%'" style="width:100%;accent-color:#10a37f;cursor:pointer;" />
+      <div style="display:flex;justify-content:space-between;font-size:9px;color:var(--primary-variant);margin-top:4px;">
+        <span data-i18n="tracking.threshold_broad">50% (Broad)</span>
+        <span data-i18n="tracking.threshold_rec">70% (Recommended)</span>
+        <span data-i18n="tracking.threshold_precise">95% (Precise)</span>
+      </div>
+    </div>
+
+    <!-- Limit & Class Filter Controls -->
+    <div style="display:flex;gap:12px;margin-bottom:20px;">
+      <div style="flex:1;">
+        <label style="display:block;font-size:10px;font-weight:600;color:var(--primary-variant);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.5px;">Max Results (Top-N)</label>
+        <input type="number" id="trk-search-limit" min="1" max="100" value="50" class="w-full bg-secondary border border-secondary-highlight rounded-lg px-3 py-2 text-primary text-xs font-mono focus:outline-none focus:border-accent" />
+      </div>
+      <div style="flex:1;">
+        <label style="display:block;font-size:10px;font-weight:600;color:var(--primary-variant);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.5px;">Class Filter</label>
+        <select id="trk-search-class-modal" class="w-full bg-secondary border border-secondary-highlight rounded-lg px-3 py-2 text-primary text-xs focus:outline-none focus:border-accent">
+          <option value="">All Classes</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- Action Buttons -->
+    <div style="display:flex;gap:12px;">
+      <button class="btn btn-ghost text-xs py-2.5 px-4" onclick="closeTrkImageSearchModal()" style="flex:1;">Cancel</button>
+      <button class="btn btn-primary text-xs font-bold py-2.5 px-4" id="trk-do-search-btn" onclick="executeTrkImageSearch()" disabled style="flex:2;display:flex;align-items:center;justify-content:center;gap:6px;">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+        <span>Search Vector DB</span>
+      </button>
+    </div>
+  </div>
+</div>
+
+<div id="toast-container"></div>
+<script src="admin.js?v=20260807-v6"></script>
+<script>
+/* ══════════════════════════════════════════════════════════════
+   TRACKING PAGE — Selection, Professional Gallery, Find Similar
+
+══════════════════════════════════════════════════════════════ */
+let _trkFile    = null;
+let _trkObjects = [];          // current gallery data
+let _trkSelected = new Set();  // selected global_ids
+
+// ── Helpers ────────────────────────────────────────────────────
+function _fmtDuration(ms) {
+  if (ms < 0 || isNaN(ms)) return null;
+  const s = Math.round(ms / 1000);
+  if (s < 60)  return `${s}s`;
+  const m = Math.floor(s / 60), rs = s % 60;
+  if (m < 60)  return `${m}m ${rs}s`;
+  return `${Math.floor(m/60)}h ${m%60}m`;
+}
+function _fmtTs(iso) {
+  if (!iso) return '—';
+  try { return new Date(iso + (iso.endsWith('Z') ? '' : 'Z')).toLocaleString(); }
+  catch { return iso; }
+}
+
+// ── Load / Render ──────────────────────────────────────────────
+async function loadTracked() {
+  const cls = document.getElementById('trk-class-filter').value;
+  const url = `${HOST}/tracked${cls ? '?class_name=' + encodeURIComponent(cls) : ''}`;
+  try {
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(await r.text());
+    const data = await r.json();
+    _trkObjects = data.objects || [];
+    renderTrkGallery(_trkObjects);
+    const cnt = data.total || _trkObjects.length;
+    document.getElementById('trk-count').textContent = cnt + ' object' + (cnt !== 1 ? 's' : '');
+    document.getElementById('trk-clear-btn').style.display = cnt > 0 ? '' : 'none';
+  } catch(e) {
+    document.getElementById('trk-gallery').innerHTML =
+      `<div class="empty-state" style="color:var(--danger);">Load failed: ${e.message}</div>`;
+  }
+}
+
+async function loadTrkClasses() {
+  try {
+    const r = await fetch(`${HOST}/tracked/classes`);
+    if (!r.ok) return;
+    const data = await r.json();
+    const classes = data.classes || [];
+    [document.getElementById('trk-class-filter'),
+     document.getElementById('trk-search-class')].forEach(sel => {
+      if (!sel) return;
+      const first = sel.options[0];
+      sel.innerHTML = '';
+      sel.appendChild(first);
+      classes.forEach(c => { const o = document.createElement('option'); o.value = c; o.textContent = c; sel.appendChild(o); });
+    });
+  } catch(e) {}
+}
+
+function renderTrkGallery(objects) {
+  const g = document.getElementById('trk-gallery');
+  if (!objects.length) {
+    _trkSelected.clear();
+    _updateSelBar();
+    _updateSelectAllButtonText();
+    g.innerHTML = '<div class="empty-state"><div class="empty-icon">◎</div>No tracked objects yet.<br><span style="font-size:10px;color:var(--text3);">Start a stream with a detection model to populate.</span></div>';
+    document.getElementById('trk-gallery-label').textContent = '';
+    return;
+  }
+  document.getElementById('trk-gallery-label').textContent = objects.length + ' unique IDs';
+  _updateSelectAllButtonText();
+
+  g.innerHTML = objects.map(o => {
+    const imgSrc   = o.image_path ? `${HOST}${o.image_path}` : null;
+    const ts       = _fmtTs(o.timestamp);
+    const firstTs  = _fmtTs(o.first_seen);
+    const dwellMs  = o.first_seen && o.timestamp
+      ? new Date(o.timestamp + (o.timestamp.endsWith('Z') ? '' : 'Z')) -
+        new Date(o.first_seen  + (o.first_seen.endsWith('Z')  ? '' : 'Z'))
+      : null;
+    const dwell    = _fmtDuration(dwellMs);
+    const cams     = o.camera_count || 1;
+    const events   = o.event_count  || 1;
+    const sel      = _trkSelected.has(o.global_id);
+    const classClr = o.class_name === 'person' ? '#6366f1' : o.class_name === 'car' ? '#f59e0b' : '#3b82f6';
+    const classTag = `<span style="background:${classClr};color:#fff;border-radius:3px;padding:1px 5px;font-size:9px;text-transform:uppercase;font-weight:700;">${o.class_name || 'object'}</span>`;
+    const selStyle = sel
+      ? 'box-shadow:0 0 0 2px #4f46e5;background:rgba(99,102,241,.1);'
+      : '';
+    const camNames = (o.cameras && o.cameras.length > 0)
+      ? o.cameras.map(c => c.camera_name || c.camera_id).join(', ')
+      : (o.camera_name || o.camera_id || 'Camera 1');
+    const camBadge = `<span style="background:var(--color-secondary);color:var(--color-primary);border:1px solid var(--border);border-radius:4px;padding:2px 7px;font-size:9.5px;font-weight:600;display:inline-flex;align-items:center;font-family:var(--font-mono,monospace);" title="${escAttr(camNames)}"><svg style="width:11px;height:11px;margin-right:4px;fill:#818cf8;flex-shrink:0;" viewBox="0 0 24 24"><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/></svg>${escHtml(camNames)}</span>`;
+    return `<div class="panel trk-card" data-id="${o.global_id}" onclick="trkOpenLightbox('${o.global_id}', '${escAttr(o.class_name || 'object')}', '${dwell || '0s'}', ${events})"
+      style="padding:0;cursor:pointer;transition:box-shadow .15s,background .15s;${selStyle}position:relative;overflow:hidden;" onmouseover="this.style.borderColor='#4f46e5'" onmouseout="this.style.borderColor='var(--border)'">
+      <!-- Thumbnail -->
+      <div style="position:relative;">
+        ${ imgSrc
+          ? `<img src="${imgSrc}" style="width:100%;aspect-ratio:1;object-fit:cover;background:#111;display:block;" onerror="this.style.display='none'" />`
+          : `<div style="width:100%;aspect-ratio:1;background:#1a1a1a;display:flex;align-items:center;justify-content:center;font-size:28px;opacity:.3;">◎</div>`
+        }
+        <!-- Selection indicator -->
+        <div class="trk-sel-check" onclick="event.stopPropagation();trkToggleSelect(event,'${o.global_id}')" style="position:absolute;top:6px;left:6px;width:18px;height:18px;border-radius:4px;border:1.5px solid ${sel ? '#4f46e5' : 'rgba(255,255,255,0.4)'};background:${sel ? '#4f46e5' : 'rgba(20,21,23,0.6)'};display:flex;align-items:center;justify-content:center;transition:all 0.15s;box-shadow: 0 1px 3px rgba(0,0,0,0.5);z-index:25;" title="Select item">
+          ${sel ? `<svg viewBox="0 0 24 24" style="width:11px;height:11px;color:#fff;" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>` : ''}
+        </div>
+        <!-- Trashcan button on TOP RIGHT (Shows on hover) -->
+        <button class="trk-del-btn" onclick="event.stopPropagation();trkDelete('${o.global_id}',this)" style="position:absolute;top:6px;right:6px;width:24px;height:24px;border:none;background:rgba(220,38,38,0.85);backdrop-filter:blur(4px);color:#fff;border-radius:6px;cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:25;box-shadow:0 2px 4px rgba(0,0,0,0.5);" onmouseover="this.style.background='#dc2626';this.style.transform='scale(1.1)'" onmouseout="this.style.background='rgba(220,38,38,0.85)';this.style.transform='none'" title="Delete object">
+          <svg xmlns="http://www.w3.org/2000/svg" style="width:12px;height:12px;" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+          </svg>
+        </button>
+      </div>
+      <!-- Info -->
+      <div style="padding:6px;">
+        <div style="font-family:var(--font-mono);font-size:10px;font-weight:700;color:var(--color-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${o.global_id}">${o.global_id}</div>
+        <div style="margin:3px 0;display:flex;gap:3px;flex-wrap:wrap;">${classTag}${camBadge}</div>
+        ${dwell ? `<div style="font-size:9px;color:var(--text3);margin-top:2px;">⏱ ${dwell}</div>` : ''}
+        <div style="font-size:9px;color:var(--text3);">${events > 1 ? `${events} events` : ''} ${ts.split(',')[1] || ts}</div>
+      </div>
+    </div>`;
+  }).join('');
+
+  // Attach hover effects
+  g.querySelectorAll('.trk-card').forEach(card => {
+    const bar = card.querySelector('.trk-hover-bar');
+    card.addEventListener('mouseenter', () => { if (bar) bar.style.opacity = '1'; });
+    card.addEventListener('mouseleave', () => { if (bar) bar.style.opacity = '0'; });
+  });
+}
+
+// ── Selection ───────────────────────────────────────────────────
+function trkToggleSelect(event, globalId) {
+  if (_trkSelected.has(globalId)) {
+    _trkSelected.delete(globalId);
+  } else {
+    _trkSelected.add(globalId);
+  }
+  _updateSelBar();
+  _refreshCardSelState(globalId);
+  _updateSelectAllButtonText();
+}
+
+function _refreshCardSelState(globalId) {
+  const card = document.querySelector(`.trk-card[data-id="${globalId}"]`);
+  if (!card) return;
+  const sel = _trkSelected.has(globalId);
+  card.style.boxShadow = sel ? '0 0 0 2px #4f46e5' : '';
+  card.style.background = sel ? 'rgba(79,70,229,0.15)' : '';
+  const check = card.querySelector('.trk-sel-check');
+  if (check) {
+    check.style.borderColor = sel ? '#4f46e5' : 'rgba(255,255,255,0.4)';
+    check.style.background  = sel ? '#4f46e5' : 'rgba(20,21,23,0.6)';
+    check.innerHTML = sel ? `<svg viewBox="0 0 24 24" style="width:12px;height:12px;color:#ffffff;display:block;" fill="none" stroke="#ffffff" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>` : '';
+  }
+}
+
+function _updateSelBar() {
+  const bar = document.getElementById('trk-sel-bar');
+  const cnt = _trkSelected.size;
+  if (!bar) return;
+  bar.style.display = cnt > 0 ? 'flex' : 'none';
+  const countEl = document.getElementById('trk-sel-count');
+  if (countEl) countEl.textContent = `${cnt} selected`;
+}
+
+function trkToggleSelectAll() {
+  const allSelected = _trkObjects.length && _trkObjects.every(o => _trkSelected.has(o.global_id));
+  if (allSelected) {
+    _trkObjects.forEach(o => _trkSelected.delete(o.global_id));
+  } else {
+    _trkObjects.forEach(o => _trkSelected.add(o.global_id));
+  }
+  _updateSelBar();
+  _trkObjects.forEach(o => _refreshCardSelState(o.global_id));
+  _updateSelectAllButtonText();
+}
+
+function _updateSelectAllButtonText() {
+  const btn = document.getElementById('trk-select-all-btn');
+  if (!btn) return;
+  if (!_trkObjects.length) {
+    btn.style.display = 'none';
+    return;
+  }
+  btn.style.display = '';
+  const allSelected = _trkObjects.every(o => _trkSelected.has(o.global_id));
+  btn.textContent = allSelected ? 'Deselect All' : 'Select All';
+}
+
+function trkClearSelection() {
+  _trkSelected.clear();
+  _updateSelBar();
+  _updateSelectAllButtonText();
+  document.querySelectorAll('.trk-card').forEach(card => {
+    card.style.boxShadow = '';
+    card.style.background = '';
+    const check = card.querySelector('.trk-sel-check');
+    if (check) {
+      check.style.borderColor = 'rgba(255,255,255,0.4)';
+      check.style.background  = 'rgba(20,21,23,0.6)';
+      check.innerHTML = '';
+    }
+  });
+}
+
+// ── Find Similar ────────────────────────────────────────────────
+async function trkFindSimilarById(globalId) {
+  const panel   = document.getElementById('trk-results-panel');
+  const list    = document.getElementById('trk-results-list');
+  const titleEl = document.getElementById('trk-results-title');
+  if (titleEl) titleEl.textContent = `Similar to ${globalId}`;
+  panel.style.display = '';
+  list.innerHTML = '<div style="color:var(--text3);font-size:11px;text-align:center;padding:12px;">Searching…</div>';
+  try {
+    const threshold = document.getElementById('trk-search-threshold')?.value || '0.55';
+    const limit     = document.getElementById('trk-search-limit')?.value     || '10';
+    const r = await fetch(`${HOST}/tracked/${encodeURIComponent(globalId)}/similar?threshold=${threshold}&limit=${limit}`);
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || JSON.stringify(data));
+    renderTrkResults(data.results || [], `Similar to ${globalId}`);
+  } catch(e) {
+    list.innerHTML = `<div style="color:var(--danger);font-size:11px;">Error: ${e.message}</div>`;
+  }
+}
+
+async function trkFindSimilarSelected() {
+  if (_trkSelected.size === 0) return;
+  // Use the first selected for now; future: merge results
+  const firstId = [..._trkSelected][0];
+  await trkFindSimilarById(firstId);
+}
+
+// ── Delete ──────────────────────────────────────────────────────
+async function trkDelete(globalId, btn) {
+  if (!confirm(`Delete all records for ${globalId}?`)) return;
+  if (btn) btn.textContent = '…';
+  try {
+    const r = await fetch(`${HOST}/tracked/${encodeURIComponent(globalId)}`, { method: 'DELETE' });
+    if (!r.ok) throw new Error(await r.text());
+    _trkSelected.delete(globalId);
+    _updateSelBar();
+    await loadTracked();
+    await loadTrkClasses();
+  } catch(e) { alert('Delete failed: ' + e.message); }
+}
+
+async function trkDeleteSelected() {
+  if (_trkSelected.size === 0) return;
+  if (!confirm(`Delete ${_trkSelected.size} selected object(s)? This cannot be undone.`)) return;
+  for (const gid of [..._trkSelected]) {
+    await fetch(`${HOST}/tracked/${encodeURIComponent(gid)}`, { method: 'DELETE' });
+  }
+  _trkSelected.clear();
+  _updateSelBar();
+  await loadTracked();
+  await loadTrkClasses();
+}
+
+async function clearAllTracked() {
+  if (!confirm('Delete ALL tracked objects? This cannot be undone.')) return;
+  for (const o of _trkObjects) {
+    await fetch(`${HOST}/tracked/${encodeURIComponent(o.global_id)}`, { method: 'DELETE' });
+  }
+  _trkSelected.clear();
+  _updateSelBar();
+  await loadTracked();
+  await loadTrkClasses();
+}
+
+// ── Photo Search (canvas cropper integrated) ─────────────────────────
+function trkSetFile(f) { if (typeof _setTrkSearchFile === 'function') _setTrkSearchFile(f); }
+function trkHandleDrop(e) { const f = e.dataTransfer?.files?.[0]; if (f) trkSetFile(f); }
+function trkSearchFileSelect(e) { const f = e.target?.files?.[0]; if (f) trkSetFile(f); }
+
+// ── Search Results Renderer ─────────────────────────────────────
+function renderTrkResults(results, title) {
+  const panel   = document.getElementById('trk-results-panel');
+  const list    = document.getElementById('trk-results-list');
+  const titleEl = document.getElementById('trk-results-title');
+  if (titleEl) titleEl.textContent = title || 'Search Results';
+  panel.style.display = '';
+  if (!results.length) {
+    list.innerHTML = '<div style="color:var(--text3);font-size:11px;text-align:center;padding:12px;">No matches found. Try a lower threshold.</div>';
+    return;
+  }
+  list.innerHTML = results.map((h, idx) => {
+    const imgSrc = h.image_path ? `${HOST}${h.image_path}` : null;
+    const score  = Math.round(h.score * 100);
+    const ts     = _fmtTs(h.timestamp);
+    const bar    = `<div style="height:4px;background:var(--color-secondary);border-radius:2px;margin-top:4px;"><div style="height:4px;width:${score}%;background:${score>80?'var(--color-primary)':score>60?'#f5a623':'var(--danger)'};border-radius:2px;transition:width .3s;"></div></div>`;
+    return `<div style="display:flex;gap:8px;padding:8px;background:var(--color-secondary);border-radius:6px;align-items:flex-start;">
+      ${ imgSrc
+        ? `<img src="${imgSrc}" style="width:52px;height:52px;object-fit:cover;border-radius:4px;flex-shrink:0;background:#111;" onerror="this.style.display='none'" />`
+        : `<div style="width:52px;height:52px;background:#111;border-radius:4px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:20px;opacity:.3;">◎</div>`
+      }
+      <div style="flex:1;min-width:0;">
+        <div style="font-family:var(--font-mono);font-size:11px;font-weight:700;color:var(--color-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">#${idx+1} ${h.global_id}</div>
+        <div style="font-size:10px;color:var(--text3);margin-top:1px;">class: <strong style="color:var(--text2);">${h.class_name||'?'}</strong> · cam: ${h.camera_name||h.camera_id||'?'}</div>
+        <div style="font-size:10px;color:var(--text3);">${ts}</div>
+        <div style="font-size:10px;font-weight:700;color:${score>80?'var(--color-primary)':score>60?'#f5a623':'var(--danger)'};">similarity: ${score}%</div>
+        ${bar}
+        <div style="display:flex;gap:4px;margin-top:6px;">
+          <button onclick="trkOpenLightbox('${h.global_id}', '${escAttr(h.class_name || 'object')}', '', 1)" style="padding:3px 8px;font-size:9px;border:none;background:#4f46e5;color:#fff;border-radius:4px;cursor:pointer;display:flex;align-items:center;gap:3px;font-weight:700;">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+            <span>Trajectory</span>
+          </button>
+          <button onclick="trkFindSimilarById('${h.global_id}')" style="padding:3px 8px;font-size:9px;border:none;background:#0d9488;color:#fff;border-radius:4px;cursor:pointer;display:flex;align-items:center;gap:3px;font-weight:700;">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+            <span>Find Similar</span>
+          </button>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// deterministic coordinates for nodes on the SVG floor plan map
+function getCameraCoords(cameraId) {
+  const presets = {
+    'cam1': {x: 20, y: 30},
+    'cam2': {x: 50, y: 25},
+    'cam3': {x: 80, y: 30},
+    'cam4': {x: 35, y: 70},
+    'cam5': {x: 65, y: 75},
+  };
+  const lowerId = String(cameraId).toLowerCase();
+  for (const k in presets) {
+    if (lowerId.includes(k)) return presets[k];
+  }
+  let hash = 0;
+  for (let i = 0; i < lowerId.length; i++) {
+    hash = lowerId.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  const x = 15 + Math.abs((hash % 70));
+  const y = 20 + Math.abs(((hash >> 8) % 60));
+  return {x, y};
+}
+
+let currentDetailEvents = [];
+let currentSelectedIdx = 0;
+
+// ResizeObserver instance for bbox re-alignment on container size changes
+let _bboxResizeObserver = null;
+let _currentBBox = null;
+let _currentBBoxClass = '';
+
+
+ /* ── Keyframe / trajectory navigation helpers ────────────────── */
+
+ function _trkUpdateFrameUI(idx) {
+   var total = currentDetailEvents.length;
+   if (!total) return;
+   var badge = document.getElementById('trk-frame-badge');
+   if (badge) badge.textContent = 'FRAME ' + (idx + 1) + ' / ' + total;
+   var pct = total > 1 ? (idx / (total - 1)) * 100 : 0;
+   var fill = document.getElementById('trk-scrubber-fill');
+   var dot  = document.getElementById('trk-scrubber-dot');
+   if (fill) fill.style.width = pct + '%';
+   if (dot)  dot.style.left  = pct + '%';
+   var label = document.getElementById('trk-frame-type-label');
+   if (label) {
+     if (idx === 0 && total > 1)              label.textContent = '\u25c4 FIRST APPEARANCE';
+     else if (idx === total - 1 && total > 1) label.textContent = 'LAST APPEARANCE \u25ba';
+     else                                     label.textContent = '';
+   }
+   var sw = document.getElementById('trk-thumb-start-wrap');
+   var ew = document.getElementById('trk-thumb-end-wrap');
+   if (sw) sw.style.borderColor = idx === 0         ? '#22d3ee' : 'rgba(34,211,238,0.3)';
+   if (ew) ew.style.borderColor = idx === total - 1 ? '#f59e0b' : 'rgba(245,158,11,0.3)';
+ }
+
+ function trkNavFrame(delta) {
+   var next = Math.max(0, Math.min(currentDetailEvents.length - 1, currentSelectedIdx + delta));
+   if (next !== currentSelectedIdx) selectTrajectoryNode(next);
+ }
+
+ function trkNavToKeyframe(which) {
+   var total = currentDetailEvents.length;
+   if (!total) return;
+   selectTrajectoryNode(which === 'end' ? total - 1 : 0);
+ }
+
+ function trkScrubClick(e) {
+   var bar = document.getElementById('trk-scrubber');
+   if (!bar || !currentDetailEvents.length) return;
+   var rect = bar.getBoundingClientRect();
+   var pct  = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+   selectTrajectoryNode(Math.round(pct * (currentDetailEvents.length - 1)));
+ }
+
+ /* Draw trajectory dots+lines overlay on the camera frame image.
+  * Uses double-rAF before reading getBoundingClientRect() so layout is stable.
+  * Segments are broken when consecutive points jump > 80px (teleportation guard).
+  */
+ function trkDrawTrailOverlay(events, selectedIdx) {
+   var canvas = document.getElementById('trk-trail-overlay');
+   var img    = document.getElementById('trk-lightbox-img');
+   if (!canvas || !img) return;
+
+   var currentEv = (events && events[selectedIdx]) || (events && events[0]);
+   if (!currentEv) return;
+
+   var trail = currentEv.bbox_trail;
+   if (!trail || !trail.length) {
+     if (currentEv.bbox && currentEv.bbox.length >= 4) {
+       trail = [currentEv.bbox];
+     } else {
+       return;
+     }
+   }
+
+   // Double-rAF: defer layout reads until browser has reflowed.
+   // Without this, getBoundingClientRect() returns stale/zero values in onload
+   // and all trail points collapse to (0,0) — causing the "randomly missing trail".
+   requestAnimationFrame(function() {
+     requestAnimationFrame(function() {
+       var dispW = canvas.offsetWidth  || canvas.clientWidth  || 640;
+       var dispH = canvas.offsetHeight || canvas.clientHeight || 480;
+       canvas.width  = dispW;
+       canvas.height = dispH;
+
+       var ctx = canvas.getContext('2d');
+       ctx.clearRect(0, 0, dispW, dispH);
+
+       var nw = img.naturalWidth;
+       var nh = img.naturalHeight;
+       if (!nw || !nh) return;
+
+       var iRect   = img.getBoundingClientRect();
+       var cRect   = canvas.getBoundingClientRect();
+
+       var imgElW = iRect.width;
+       var imgElH = iRect.height;
+       var imgRatio = nw / nh;
+       var elRatio  = imgElW / imgElH;
+
+       var renderedW, renderedH, imgOffL, imgOffT;
+       if (imgRatio > elRatio) {
+         renderedW = imgElW;
+         renderedH = imgElW / imgRatio;
+         imgOffL   = 0;
+         imgOffT   = (imgElH - renderedH) / 2;
+       } else {
+         renderedH = imgElH;
+         renderedW = imgElH * imgRatio;
+         imgOffL   = (imgElW - renderedW) / 2;
+         imgOffT   = 0;
+       }
+
+       var offsetLeft = (iRect.left - cRect.left) + imgOffL;
+       var offsetTop  = (iRect.top  - cRect.top)  + imgOffT;
+
+       var pts = [];
+       for (var i = 0; i < trail.length; i++) {
+         var bb = trail[i];
+         if (!bb || bb.length < 4) continue;
+         var isNorm = (bb[2] <= 1.05 && bb[3] <= 1.05);
+         var ncx = isNorm ? (bb[0] + bb[2]) / 2 : ((bb[0] + bb[2]) / 2) / nw;
+         var ncy = isNorm ? (bb[1] + bb[3]) / 2 : ((bb[1] + bb[3]) / 2) / nh;
+         pts.push({
+           cx: offsetLeft + ncx * renderedW,
+           cy: offsetTop  + ncy * renderedH
+         });
+       }
+       if (!pts.length) return;
+
+       ctx.lineCap  = 'round';
+       ctx.lineJoin = 'round';
+
+       // Draw in segments — break on jumps > 80px to avoid teleportation lines
+       var JUMP_THRESH = 80;
+       if (pts.length >= 2) {
+         var segStart = 0;
+         for (var i = 1; i <= pts.length; i++) {
+           var jumped = i < pts.length &&
+             Math.sqrt(Math.pow(pts[i].cx - pts[i-1].cx, 2) + Math.pow(pts[i].cy - pts[i-1].cy, 2)) > JUMP_THRESH;
+           if (jumped || i === pts.length) {
+             var segLen = i - segStart;
+             for (var j = segStart + 1; j < segStart + segLen; j++) {
+               var t2 = segLen > 1 ? (j - segStart) / (segLen - 1) : 1;
+               ctx.beginPath();
+               ctx.strokeStyle = 'rgba(34,197,94,' + (0.35 + t2 * 0.65) + ')';
+               ctx.lineWidth   = 1.5 + t2 * 1.0;
+               ctx.moveTo(pts[j-1].cx, pts[j-1].cy);
+               ctx.lineTo(pts[j].cx, pts[j].cy);
+               ctx.stroke();
+             }
+             segStart = i;
+           }
+         }
+       }
+
+       for (var i = 0; i < pts.length; i++) {
+         var p = pts[i];
+         if (i === 0) {
+           ctx.shadowColor = '#ef4444'; ctx.shadowBlur = 8;
+           ctx.fillStyle = '#ef4444';
+           ctx.beginPath(); ctx.arc(p.cx, p.cy, 5, 0, Math.PI * 2); ctx.fill();
+           ctx.shadowBlur = 0;
+         } else if (i === pts.length - 1) {
+           ctx.shadowColor = '#22c55e'; ctx.shadowBlur = 8;
+           ctx.fillStyle = '#22c55e';
+           ctx.beginPath(); ctx.arc(p.cx, p.cy, 5, 0, Math.PI * 2); ctx.fill();
+           ctx.shadowBlur = 0;
+         } else {
+           ctx.fillStyle = 'rgba(255,255,255,0.75)';
+           ctx.beginPath(); ctx.arc(p.cx, p.cy, 3, 0, Math.PI * 2); ctx.fill();
+         }
+       }
+     });
+   });
+ }
+
+
+function updateBBoxPosition(bbox, className) {
+  const img = document.getElementById('trk-lightbox-img');
+  const overlay = document.getElementById('trk-lightbox-rect');
+  const label = document.getElementById('trk-lightbox-rect-label');
+  const container = document.getElementById('trk-lightbox-view-container');
+
+  // Store for re-alignment on resize
+  _currentBBox = bbox;
+  _currentBBoxClass = className;
+
+  if (!bbox || bbox.length !== 4) {
+    overlay.style.display = 'none';
+    return;
+  }
+
+  label.textContent = className;
+
+  // Disconnect previous observer before attaching a new one
+  if (_bboxResizeObserver) {
+    _bboxResizeObserver.disconnect();
+    _bboxResizeObserver = null;
+  }
+
+  function align() {
+    const nw = img.naturalWidth;
+    const nh = img.naturalHeight;
+    if (!nw || !nh) return;
+
+    // Use getBoundingClientRect for pixel-accurate positions
+    const cRect = container.getBoundingClientRect();
+    const iRect = img.getBoundingClientRect();
+
+    if (!cRect.width || !cRect.height) return;
+
+    // The image may be letterboxed inside its own element due to object-fit:contain
+    // Compute the actual rendered image area inside the <img> element
+    const imgElW = iRect.width;
+    const imgElH = iRect.height;
+    const imgRatio = nw / nh;
+    const elRatio = imgElW / imgElH;
+
+    let renderedW, renderedH, imgOffL, imgOffT;
+    if (imgRatio > elRatio) {
+      renderedW = imgElW;
+      renderedH = imgElW / imgRatio;
+      imgOffL = 0;
+      imgOffT = (imgElH - renderedH) / 2;
+    } else {
+      renderedH = imgElH;
+      renderedW = imgElH * imgRatio;
+      imgOffL = (imgElW - renderedW) / 2;
+      imgOffT = 0;
+    }
+
+    // Offset of the rendered image area from the container's top-left
+    const offsetLeft = (iRect.left - cRect.left) + imgOffL;
+    const offsetTop  = (iRect.top  - cRect.top)  + imgOffT;
+
+    const x1 = bbox[0], y1 = bbox[1], x2 = bbox[2], y2 = bbox[3];
+    const isNorm = (x2 <= 1.05 && y2 <= 1.05);
+    const nx1 = isNorm ? x1 : x1 / nw;
+    const ny1 = isNorm ? y1 : y1 / nh;
+    const nx2 = isNorm ? x2 : x2 / nw;
+    const ny2 = isNorm ? y2 : y2 / nh;
+
+    const boxL = offsetLeft + nx1 * renderedW;
+    const boxT = offsetTop  + ny1 * renderedH;
+    const boxW = (nx2 - nx1) * renderedW;
+    const boxH = (ny2 - ny1) * renderedH;
+
+    overlay.style.left   = `${boxL}px`;
+    overlay.style.top    = `${boxT}px`;
+    overlay.style.width  = `${boxW}px`;
+    overlay.style.height = `${boxH}px`;
+    overlay.style.display = 'block';
+  }
+
+  function scheduleAlign() {
+    // Double rAF: first frame commits the layout, second frame reads accurate measurements
+    requestAnimationFrame(() => requestAnimationFrame(align));
+  }
+
+  // This function is always called from an onload handler (see selectTrajectoryNode and
+  // trkSimilarClick), so the image is guaranteed loaded. Run alignment immediately.
+  scheduleAlign();
+
+  // Re-align whenever the container is resized (window resize, panel resize, etc.)
+  _bboxResizeObserver = new ResizeObserver(scheduleAlign);
+  _bboxResizeObserver.observe(container);
+}
+
+
+function selectTrajectoryNode(idx) {
+  currentSelectedIdx = idx;
+  const ev = currentDetailEvents[idx];
+  if (!ev) return;
+  
+  const img = document.getElementById('trk-lightbox-img');
+  const rect = document.getElementById('trk-lightbox-rect');
+  
+  // Always hide the overlay and clear any previous onload immediately
+  rect.style.display = 'none';
+  img.onload = null;
+
+  const hasFull = !!ev.image_path_full;
+  const imgSrc = hasFull ? `${HOST}${ev.image_path_full}` : (ev.image_path ? `${HOST}${ev.image_path}` : '');
+
+  if (hasFull && ev.bbox && ev.bbox.length === 4) {
+    // Use best_crop_bbox when available — it's the bbox paired with image_path_full.
+    // Fallback to ev.bbox only when best_crop_bbox is absent (legacy events before fix).
+    const capturedBbox = (ev.best_crop_bbox && ev.best_crop_bbox.length === 4)
+      ? ev.best_crop_bbox.slice()
+      : ev.bbox.slice();
+    const capturedClass = ev.class_name || 'object';
+    const capturedIdx = idx;
+    const prevSrc = img.src;
+
+    img.onload = () => {
+      img.onload = null;
+      updateBBoxPosition(capturedBbox, capturedClass);
+      trkDrawTrailOverlay(currentDetailEvents, capturedIdx);
+    };
+    img.src = imgSrc;
+
+    // Handle same-URL case: onload won't fire if src unchanged
+    if (img.src === prevSrc && img.complete && img.naturalWidth) {
+      const fn = img.onload;
+      img.onload = null;
+      fn?.();
+    }
+  } else {
+    img.src = imgSrc;
+  }
+  
+
+  document.getElementById('trk-lightbox-cam').textContent = ev.camera_name || ev.camera_id || 'unknown';
+  document.getElementById('trk-lightbox-time').textContent = _fmtTs(ev.timestamp);
+  
+  const playerWrap = document.getElementById('trk-detail-player-wrap');
+  const player = document.getElementById('trk-detail-player');
+
+  // Always destroy any existing HLS instance before loading a new source
+  if (player._hlsInstance) {
+    player._hlsInstance.destroy();
+    player._hlsInstance = null;
+  }
+  player.src = '';
+
+  if (ev.video_filename) {
+    playerWrap.style.display = 'flex';
+    const videoUrl = `${HOST}/recordings/${ev.video_filename}`;
+    const offset = ev.video_offset_seconds ?? 0;
+
+    if (videoUrl.endsWith('.m3u8')) {
+      // HLS recording — use HLS.js on Chrome/Firefox; Safari handles natively.
+      // NOTE: -reset_timestamps 1 is added to FFmpeg so PTS always starts from 0.
+      //       This means offset (seconds since recording start) maps 1:1 to currentTime.
+      if (window.Hls && Hls.isSupported()) {
+        const hls = new Hls({
+          enableWorker: true,
+          lowLatencyMode: false,
+          maxBufferLength: 60,
+          // Use startPosition so HLS.js seeks during initial buffering — works for
+          // both VoD and live manifests now that FFmpeg resets timestamps to 0.
+          startPosition: offset,
+        });
+        hls.loadSource(videoUrl);
+        hls.attachMedia(player);
+        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+          // Confirm the seek position after manifest is parsed.
+          // startPosition handles it for most cases; this is a safety fallback.
+          if (Math.abs(player.currentTime - offset) > 1) {
+            player.currentTime = offset;
+          }
+          // Do NOT autoplay — leave player paused; user clicks play manually.
+        });
+        hls.on(Hls.Events.ERROR, (_evt, errData) => {
+          if (errData.fatal) {
+            console.warn('[HLS] fatal error', errData.type, errData.details);
+            hls.destroy();
+            player._hlsInstance = null;
+          }
+        });
+        player._hlsInstance = hls;
+      } else if (player.canPlayType('application/vnd.apple.mpegurl')) {
+        // Safari native HLS
+        player.src = videoUrl;
+        player.onloadedmetadata = () => { player.currentTime = offset; };
+        // No autoplay — Safari also respects the paused state here.
+      }
+    } else {
+      // Plain MP4 (legacy recordings)
+      player.src = videoUrl;
+      player.onloadedmetadata = () => { player.currentTime = offset; };
+    }
+  } else {
+    playerWrap.style.display = 'none';
+  }
+
+
+
+  
+  const cards = document.querySelectorAll('.trk-timeline-card');
+  cards.forEach((card, cidx) => {
+    if (cidx === idx) {
+      card.style.background = 'rgba(99,102,241,.15)';
+      card.style.borderColor = 'var(--color-primary)';
+    } else {
+      card.style.background = 'var(--color-background-alt)';
+      card.style.borderColor = 'var(--border)';
+    }
+  });
+
+  // Update nav UI (badge, scrubber, frame-type label, thumbnail highlight)
+  _trkUpdateFrameUI(idx);
+
+  // Redraw trail overlay after the image finishes loading.
+  // The img.onload handler above (bbox path) already calls trkDrawTrailOverlay.
+  // For the no-bbox path (else branch), defer here instead.
+  var _overlayImg2 = document.getElementById('trk-lightbox-img');
+  if (!hasFull || !ev.bbox || ev.bbox.length !== 4) {
+    // No-bbox path: img.src was set without onload — wire up overlay draw now
+    var _capturedIdx2 = idx;
+    if (_overlayImg2.complete && _overlayImg2.naturalWidth) {
+      trkDrawTrailOverlay(currentDetailEvents, _capturedIdx2);
+    } else {
+      _overlayImg2.addEventListener('load', function _onceLd() {
+        _overlayImg2.removeEventListener('load', _onceLd);
+        trkDrawTrailOverlay(currentDetailEvents, _capturedIdx2);
+      });
+    }
+  }
+}
+
+
+async function trkOpenLightbox(globalId, className, dwell, eventsCount) {
+  const modal = document.getElementById('trk-lightbox-modal');
+  document.getElementById('trk-lightbox-id').textContent = globalId;
+  document.getElementById('trk-lightbox-badge').textContent = className;
+
+  const badge = document.getElementById('trk-lightbox-badge');
+  const classClr = className === 'person' ? '#6366f1' : className === 'car' ? '#f59e0b' : '#3b82f6';
+  badge.style.background = classClr;
+
+  document.getElementById('trk-lightbox-dwell').textContent = dwell || '0s';
+  document.getElementById('trk-lightbox-events').textContent = eventsCount || '1';
+  document.getElementById('trk-lightbox-rect').style.display = 'none';
+  document.getElementById('trk-detail-player-wrap').style.display = 'none';
+  document.getElementById('trk-detail-similar-wrap').style.display = 'none';
+
+  // Hide the timeline list and camera tabs — not needed with single event per object
+  const list = document.getElementById('trk-detail-results-list');
+  if (list) list.innerHTML = '';
+  const tabWrap = document.getElementById('trk-detail-cam-tabs');
+  if (tabWrap) tabWrap.style.display = 'none';
+
+  modal.style.display = 'flex';
+
+  // Load similar objects
+  const simList = document.getElementById('trk-detail-similar-list');
+  const simWrap = document.getElementById('trk-detail-similar-wrap');
+  if (simList) simList.innerHTML = '<div style="color:var(--text3);font-size:10px;text-align:center;padding:10px;">Searching similar...</div>';
+
+  fetch(`${HOST}/tracked/${encodeURIComponent(globalId)}/similar?threshold=0.50&limit=8`)
+    .then(r => r.json())
+    .then(data => {
+      const hits = data.results || [];
+      if (!hits.length) { if (simWrap) simWrap.style.display = 'none'; return; }
+      if (simWrap) simWrap.style.display = 'flex';
+      if (simList) simList.innerHTML = hits.map(h => {
+        const imgSrc = h.image_path ? `${HOST}${h.image_path}` : null;
+        const score = Math.round(h.score * 100);
+        const ts = _fmtTs(h.timestamp);
+        const dwellVal = h.dwell_seconds ? `${Math.round(h.dwell_seconds)}s` : '0s';
+        const scoreColor = score >= 70 ? '#22c55e' : score >= 55 ? '#f59e0b' : '#f87171';
+        const confidence = score >= 70 ? 'Strong' : score >= 55 ? 'Likely' : 'Weak';
+        return `
+          <div style="cursor:pointer;display:flex;gap:8px;align-items:center;background:rgba(255,255,255,0.02);border:1px solid var(--border);border-radius:4px;padding:6px 8px;transition:background 0.15s;" onmouseover="this.style.background='rgba(255,255,255,0.05)'" onmouseout="this.style.background='rgba(255,255,255,0.02)'" onclick="event.stopPropagation();trkOpenLightbox('${h.global_id}', '${escAttr(h.class_name || 'object')}', '${dwellVal}', ${h.event_count || 1})">
+            <div style="flex-shrink:0;">
+              ${imgSrc
+                ? `<img src="${imgSrc}" style="width:36px;height:36px;object-fit:cover;border-radius:3px;background:#111;border:2px solid ${scoreColor}22;" onerror="this.style.display='none'" />`
+                : `<div style="width:36px;height:36px;background:#111;border-radius:3px;display:flex;align-items:center;justify-content:center;font-size:12px;opacity:0.3;">◎</div>`
+              }
+            </div>
+            <div style="flex:1;min-width:0;line-height:1.3;">
+              <div style="font-size:10px;font-weight:700;color:var(--color-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${h.global_id}</div>
+              <div style="display:flex;align-items:center;gap:4px;margin-top:2px;">
+                <div style="flex:1;height:3px;background:rgba(255,255,255,0.08);border-radius:2px;overflow:hidden;">
+                  <div style="width:${score}%;height:100%;background:${scoreColor};border-radius:2px;"></div>
+                </div>
+                <span style="font-size:9px;color:${scoreColor};font-weight:700;white-space:nowrap;">${confidence} ${score}%</span>
+              </div>
+              <div style="font-size:9px;color:var(--text3);margin-top:1px;">cam: ${h.camera_name || h.camera_id || '?'} · ${ts}</div>
+            </div>
+          </div>
+        `;
+      }).join('');
+    })
+    .catch(() => { if (simWrap) simWrap.style.display = 'none'; });
+
+  try {
+    const r = await fetch(`${HOST}/api/v1/tracking/trajectories/${encodeURIComponent(globalId)}`);
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || JSON.stringify(data));
+
+    // API now returns events[0] as the single canonical record for this global_id
+    const events = data.events || [];
+    if (!events.length) return;
+
+    currentDetailEvents = events;
+    currentSelectedIdx = 0;
+
+    const ev = events[0];
+
+    // Update camera / time in header
+    const camHeader = document.getElementById('trk-lightbox-cam');
+    if (camHeader) camHeader.textContent = ev.camera_name || ev.camera_id || 'Camera';
+    const timeEl = document.getElementById('trk-lightbox-time');
+    if (timeEl) timeEl.textContent = _fmtTs(ev.timestamp);
+
+    // Show detected frame + bbox overlay + trail
+    const img = document.getElementById('trk-lightbox-img');
+    const rectEl = document.getElementById('trk-lightbox-rect');
+    rectEl.style.display = 'none';
+    img.onload = null;
+
+    const hasFull = !!ev.image_path_full;
+    const imgSrc = hasFull ? `${HOST}${ev.image_path_full}` : (ev.image_path ? `${HOST}${ev.image_path}` : '');
+
+    if (hasFull && ev.bbox && ev.bbox.length === 4) {
+      // image_path_full = original detection frame. bbox = bbox AT THAT FRAME (never overwritten).
+      const capturedBbox = ev.bbox.slice();
+      const capturedClass = ev.class_name || 'object';
+      const prevSrc = img.src;
+      img.onload = () => {
+        img.onload = null;
+        updateBBoxPosition(capturedBbox, capturedClass);
+        trkDrawTrailOverlay(currentDetailEvents, 0);
+      };
+      img.src = imgSrc;
+      if (img.src === prevSrc && img.complete && img.naturalWidth) {
+        const fn = img.onload; img.onload = null; fn?.();
+      }
+    } else {
+      img.src = imgSrc;
+      if (img.complete && img.naturalWidth) {
+        trkDrawTrailOverlay(currentDetailEvents, 0);
+      } else {
+        img.addEventListener('load', function _once() {
+          img.removeEventListener('load', _once);
+          trkDrawTrailOverlay(currentDetailEvents, 0);
+        });
+      }
+    }
+
+    // Video player
+    const playerWrap = document.getElementById('trk-detail-player-wrap');
+    const player = document.getElementById('trk-detail-player');
+    if (player._hlsInstance) { player._hlsInstance.destroy(); player._hlsInstance = null; }
+    player.src = '';
+
+    if (ev.video_filename) {
+      playerWrap.style.display = 'flex';
+      const videoUrl = `${HOST}/recordings/${ev.video_filename}`;
+      const offset = ev.video_offset_seconds ?? 0;
+      if (videoUrl.endsWith('.m3u8')) {
+        if (window.Hls && Hls.isSupported()) {
+          const hls = new Hls({ enableWorker: true, lowLatencyMode: false, maxBufferLength: 60, startPosition: offset });
+          hls.loadSource(videoUrl); hls.attachMedia(player);
+          const applySeek = () => { if (offset > 0 && Math.abs(player.currentTime - offset) > 1) player.currentTime = offset; };
+          hls.on(Hls.Events.MANIFEST_PARSED, applySeek);
+          hls.on(Hls.Events.FRAG_LOADED, applySeek);
+          player.addEventListener('loadeddata', applySeek, { once: true });
+          hls.on(Hls.Events.ERROR, (_e, d) => { if (d.fatal) { hls.destroy(); player._hlsInstance = null; } });
+          player._hlsInstance = hls;
+        } else if (player.canPlayType('application/vnd.apple.mpegurl')) {
+          player.src = videoUrl; player.onloadedmetadata = () => { if (offset > 0) player.currentTime = offset; };
+        }
+      } else {
+        player.src = videoUrl; player.onloadedmetadata = () => { if (offset > 0) player.currentTime = offset; };
+      }
+    } else {
+      playerWrap.style.display = 'none';
+    }
+
+  } catch(e) {
+    console.error('trkOpenLightbox error:', e);
+  }
+}
+
+
+function trkCloseLightbox() {
+  document.getElementById('trk-lightbox-modal').style.display = 'none';
+  const player = document.getElementById('trk-detail-player');
+  if (player) {
+    player.pause();
+    player.src = '';
+  }
+}
+
+// ── Clips Modal controls ─────────────────────────────────────────
+async function openClipsModal(localId = 'all', name = 'All Recordings') {
+  let streamId = 'all';
+  if (localId && localId !== 'all') {
+    const inst = typeof streams !== 'undefined' ? streams.get(localId) : null;
+    streamId = inst ? (inst.managedStreamId || localId) : localId;
+  }
+
+  document.getElementById('trk-clips-title').textContent = name ? `Recorded Clips: ${name}` : 'All Server Recordings';
+  const list = document.getElementById('trk-clips-list');
+  list.innerHTML = '<div style="color:var(--text3);text-align:center;padding:12px;">Loading clips…</div>';
+  document.getElementById('trk-clips-modal').style.display = 'flex';
+  const player = document.getElementById('trk-clip-player');
+  player.style.display = 'none';
+  player.src = '';
+  
+  try {
+    const r = await fetch(`${HOST}/api/v1/recordings/${encodeURIComponent(streamId)}`);
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || JSON.stringify(data));
+    const clips = data.recordings || [];
+    if (!clips.length) {
+      list.innerHTML = '<div style="color:var(--text3);text-align:center;padding:12px;">No recorded clips found for this stream.</div>';
+      return;
+    }
+    list.innerHTML = clips.map(c => {
+      const sizeMB = (c.size_bytes / (1024 * 1024)).toFixed(1);
+      const timeStr = c.created_at ? new Date(c.created_at).toLocaleString() : 'unknown';
+      const isHls = !!c.is_hls;
+      return `
+        <div class="hover:bg-secondary p-2 rounded transition flex items-center justify-between border border-secondary-highlight" style="background:var(--color-background-alt);margin-bottom:6px;gap:8px;">
+          <div style="flex:1;min-width:0;cursor:pointer;" onclick="playClip('${c.url}', ${isHls})">
+            <div style="font-size:11px;font-weight:700;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${c.filename}">${c.filename}</div>
+            <div style="font-size:10px;color:var(--text3);margin-top:2px;">${timeStr} · ${sizeMB} MB ${isHls ? '· HLS 🎥' : ''}</div>
+          </div>
+          <button class="btn btn-danger" onclick="deleteClip('${c.filename}', this)" style="padding:4px 8px;font-size:10px;margin-left:8px;background:#dc2626;color:#fff;border:none;border-radius:3px;cursor:pointer;">✕ Delete</button>
+        </div>
+      `;
+    }).join('');
+  } catch(e) {
+    list.innerHTML = `<div style="color:var(--danger);font-size:11px;">Error loading clips: ${e.message}</div>`;
+  }
+}
+
+function playClip(url, isHls) {
+  const player = document.getElementById('trk-clip-player');
+  
+  if (player._hlsInstance) {
+    player._hlsInstance.destroy();
+    player._hlsInstance = null;
+  }
+  player.src = '';
+
+  const fullUrl = url.startsWith('http') ? url : `${HOST}${url}`;
+
+  if (isHls && fullUrl.endsWith('.m3u8')) {
+    if (window.Hls && Hls.isSupported()) {
+      const hls = new Hls({
+        enableWorker: true,
+        lowLatencyMode: false,
+      });
+      hls.loadSource(fullUrl);
+      hls.attachMedia(player);
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        player.play().catch(() => {});
+      });
+      player._hlsInstance = hls;
+    } else if (player.canPlayType('application/vnd.apple.mpegurl')) {
+      player.src = fullUrl;
+      player.play().catch(() => {});
+    }
+  } else {
+    player.src = fullUrl;
+    player.play().catch(() => {});
+  }
+  player.style.display = 'block';
+}
+
+async function deleteClip(filename, btnEl) {
+  if (!confirm(`Are you sure you want to delete recording "${filename}"?`)) return;
+  try {
+    const r = await fetch(`${HOST}/api/v1/recordings/${encodeURIComponent(filename)}`, {
+      method: 'DELETE'
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || JSON.stringify(data));
+    toast('Recording deleted successfully', 'success');
+    const player = document.getElementById('trk-clip-player');
+    if (player.src.includes(filename) || (player._hlsInstance && player._hlsInstance.url && player._hlsInstance.url.includes(filename))) {
+      if (player._hlsInstance) {
+        player._hlsInstance.destroy();
+        player._hlsInstance = null;
+      }
+      player.style.display = 'none';
+      player.src = '';
+    }
+    btnEl.closest('div').remove();
+    const list = document.getElementById('trk-clips-list');
+    if (!list.children.length) {
+      list.innerHTML = '<div style="color:var(--text3);text-align:center;padding:12px;">No recorded clips found for this stream.</div>';
+    }
+  } catch(e) {
+    toast('Failed to delete recording: ' + e.message, 'error');
+  }
+}
+
+function closeClipsModal() {
+  document.getElementById('trk-clips-modal').style.display = 'none';
+  const player = document.getElementById('trk-clip-player');
+  if (player._hlsInstance) {
+    player._hlsInstance.destroy();
+    player._hlsInstance = null;
+  }
+  player.pause();
+  player.src = '';
+}
+
+// ── Sub-Tab Switcher for Tracking Page ───────────────────────────
+function switchTrkSubTab(tabName) {
+  const btnTrack = document.getElementById('btn-subtab-tracking');
+  const btnRec = document.getElementById('btn-subtab-recordings');
+  const winTrack = document.getElementById('win-tracking-objects');
+  const winRec = document.getElementById('win-manage-recordings');
+
+  if (tabName === 'recordings') {
+    if (btnTrack) btnTrack.className = 'btn btn-ghost';
+    if (btnRec) btnRec.className = 'btn btn-primary';
+    if (winTrack) winTrack.style.display = 'none';
+    if (winRec) winRec.style.display = 'block';
+    loadManageRecordings();
+  } else {
+    if (btnTrack) btnTrack.className = 'btn btn-primary';
+    if (btnRec) btnRec.className = 'btn btn-ghost';
+    if (winTrack) winTrack.style.display = 'block';
+    if (winRec) winRec.style.display = 'none';
+  }
+}
+
+// ── Standalone Manage Recordings Panel JS ────────────────────────
+let _allRecordingsCache = [];
+
+function escAttr(str) {
+  return (str || '').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+async function loadManageRecordings() {
+  const container = document.getElementById('rec-list-container');
+  const countEl = document.getElementById('rec-summary-count');
+  const sizeEl = document.getElementById('rec-summary-size');
+  
+  if (container) container.innerHTML = '<div style="text-align:center;padding:24px;color:var(--text3);">Loading recordings…</div>';
+  
+  try {
+    const r = await fetch(`${HOST}/api/v1/recordings/all`);
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || JSON.stringify(data));
+    
+    _allRecordingsCache = data.recordings || [];
+    
+    if (!_allRecordingsCache.length) {
+      if (container) {
+        container.innerHTML = `
+          <div style="text-align:center;padding:40px;color:var(--text3);border:1px dashed var(--border);border-radius:var(--radius);display:flex;flex-direction:column;align-items:center;justify-content:center;">
+            <svg class="h-10 w-10 text-primary opacity-40 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+            <div style="font-size:13px;font-weight:600;color:var(--text2);">No video recordings found</div>
+            <div style="font-size:11px;margin-top:4px;">Recorded HLS/MP4 streams will appear here automatically.</div>
+          </div>`;
+      }
+      if (countEl) countEl.textContent = '0 recordings found';
+      if (sizeEl) sizeEl.textContent = '0 MB total';
+      recUpdateSelectionUI();
+      return;
+    }
+    
+    let totalBytes = 0;
+    if (container) {
+      container.innerHTML = _allRecordingsCache.map(c => {
+        totalBytes += (c.size_bytes || 0);
+        const sizeMB = (c.size_bytes / (1024 * 1024)).toFixed(1);
+        const timeStr = c.created_at ? new Date(c.created_at).toLocaleString() : 'unknown date';
+        const isHls = !!c.is_hls;
+        const safeFile = escAttr(c.filename);
+        
+        return `
+          <div class="hover:bg-secondary transition flex items-center border border-secondary-highlight rounded" style="padding:10px 12px;background:var(--color-background-alt);gap:12px;margin-bottom:6px;">
+            <input type="checkbox" class="rec-item-chk" data-filename="${safeFile}" onchange="recUpdateSelectionUI()" style="width:16px;height:16px;cursor:pointer;accent-color:#10b981;" />
+            
+            <div style="flex:1;min-width:0;cursor:pointer;" onclick="playClipInIntegratedPlayer('${c.url}', ${isHls}, '${safeFile}')">
+              <div style="font-size:12px;font-weight:700;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${safeFile}">
+                ${safeFile}
+              </div>
+              <div style="font-size:11px;color:var(--text3);margin-top:4px;display:flex;align-items:center;gap:12px;">
+                <span style="display:inline-flex;align-items:center;gap:4px;">
+                  <svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                  ${timeStr}
+                </span>
+                <span style="display:inline-flex;align-items:center;gap:4px;">
+                  <svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s-8-1.79-8-4"/></svg>
+                  ${sizeMB} MB
+                </span>
+                <span style="background:${isHls ? 'rgba(99,102,241,0.15)' : 'rgba(16,185,129,0.15)'};color:${isHls ? 'var(--color-primary)' : '#10b981'};font-size:9px;font-weight:700;padding:1px 6px;border-radius:3px;">
+                  ${isHls ? 'HLS' : 'MP4'}
+                </span>
+              </div>
+            </div>
+
+            <button class="btn btn-ghost" onclick="playClipInIntegratedPlayer('${c.url}', ${isHls}, '${safeFile}')" style="padding:4px 8px;font-size:11px;display:inline-flex;align-items:center;gap:4px;color:var(--color-primary);" title="Play preview">
+              <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/><path stroke-linecap="round" stroke-linejoin="round" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+              <span>Play</span>
+            </button>
+
+            <button class="btn btn-danger" onclick="deleteSingleRecording('${safeFile}')" style="padding:4px 8px;font-size:11px;background:rgba(239,68,68,0.1);color:#ef4444;border:1px solid rgba(239,68,68,0.3);border-radius:4px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;" title="Delete this recording">
+              <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+              <span>Delete</span>
+            </button>
+          </div>
+        `;
+      }).join('');
+    }
+    
+    if (countEl) countEl.textContent = `${_allRecordingsCache.length} recordings found`;
+    if (sizeEl) sizeEl.textContent = `${(totalBytes / (1024 * 1024)).toFixed(1)} MB total`;
+    recUpdateSelectionUI();
+
+  } catch(e) {
+    if (container) container.innerHTML = `<div style="color:var(--danger);padding:16px;text-align:center;">Error loading recordings: ${e.message}</div>`;
+  }
+}
+
+function recToggleSelectAll(isChecked) {
+  const checkboxes = document.querySelectorAll('.rec-item-chk');
+  checkboxes.forEach(chk => {
+    chk.checked = isChecked;
+  });
+  recUpdateSelectionUI();
+}
+
+function recUpdateSelectionUI() {
+  const checkboxes = document.querySelectorAll('.rec-item-chk');
+  const checked = document.querySelectorAll('.rec-item-chk:checked');
+  const btnDelete = document.getElementById('rec-delete-selected-btn');
+  const selCountEl = document.getElementById('rec-sel-count');
+  const selectAllChk = document.getElementById('rec-select-all-chk');
+
+  const count = checked.length;
+  if (selCountEl) selCountEl.textContent = count;
+  if (btnDelete) btnDelete.disabled = count === 0;
+
+  if (selectAllChk) {
+    selectAllChk.checked = checkboxes.length > 0 && count === checkboxes.length;
+    selectAllChk.indeterminate = count > 0 && count < checkboxes.length;
+  }
+}
+
+async function recDeleteSelected() {
+  const checked = Array.from(document.querySelectorAll('.rec-item-chk:checked')).map(c => c.getAttribute('data-filename'));
+  if (!checked.length) return;
+
+  if (!confirm(`Are you sure you want to delete ${checked.length} selected recording(s)? This action cannot be undone.`)) return;
+
+  let successCount = 0;
+  for (const filename of checked) {
+    try {
+      const r = await fetch(`${HOST}/api/v1/recordings/${encodeURIComponent(filename)}`, { method: 'DELETE' });
+      if (r.ok) successCount++;
+    } catch(e) {
+      console.error(`Error deleting ${filename}:`, e);
+    }
+  }
+
+  toast(`Successfully deleted ${successCount} recording(s)`, 'success');
+  loadManageRecordings();
+}
+
+async function deleteSingleRecording(filename) {
+  if (!confirm(`Are you sure you want to delete recording "${filename}"?`)) return;
+  try {
+    const r = await fetch(`${HOST}/api/v1/recordings/${encodeURIComponent(filename)}`, { method: 'DELETE' });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || JSON.stringify(data));
+    toast('Recording deleted successfully', 'success');
+    
+    // Stop player if playing this video
+    const player = document.getElementById('rec-integrated-player');
+    if (player && (player.src.includes(filename) || (player._hlsInstance && player._hlsInstance.url && player._hlsInstance.url.includes(filename)))) {
+      if (player._hlsInstance) {
+        player._hlsInstance.destroy();
+        player._hlsInstance = null;
+      }
+      player.src = '';
+      const titleEl = document.getElementById('rec-preview-title');
+      if (titleEl) titleEl.textContent = 'Select a clip to play';
+    }
+    loadManageRecordings();
+  } catch(e) {
+    toast(`Failed to delete recording: ${e.message}`, 'error');
+  }
+}
+
+function playClipInIntegratedPlayer(url, isHls, filename) {
+  const player = document.getElementById('rec-integrated-player');
+  const titleEl = document.getElementById('rec-preview-title');
+  if (titleEl) titleEl.textContent = filename || 'Playing video';
+  
+  if (player._hlsInstance) {
+    player._hlsInstance.destroy();
+    player._hlsInstance = null;
+  }
+  player.src = '';
+
+  const fullUrl = url.startsWith('http') ? url : `${HOST}${url}`;
+
+  if (isHls && fullUrl.endsWith('.m3u8')) {
+    if (window.Hls && Hls.isSupported()) {
+      const hls = new Hls({ enableWorker: true, lowLatencyMode: false });
+      hls.loadSource(fullUrl);
+      hls.attachMedia(player);
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        player.play().catch(() => {});
+      });
+      player._hlsInstance = hls;
+    } else if (player.canPlayType('application/vnd.apple.mpegurl')) {
+      player.src = fullUrl;
+      player.play().catch(() => {});
+    }
+  } else {
+    player.src = fullUrl;
+    player.play().catch(() => {});
+  }
+}
+
+// ── Hook switchPage ─────────────────────────────────────────────
+const _origSwitchPageHTML = window.switchPage;
+window.switchPage = function(name) {
+  if (_origSwitchPageHTML) _origSwitchPageHTML(name);
+  if (name === 'tracking') { loadTrkClasses(); loadTracked(); }
+};
+</script>
+
+<!-- ─── ADMIN LOGIN OVERLAY ───────────────────────────────── -->
+<div id="admin-login-overlay" class="fixed inset-0 z-50 flex items-center justify-center transition-opacity duration-300" style="background-color: var(--color-background); color: var(--color-primary);">
+  <button type="button" onclick="toggleTheme()" class="absolute top-4 right-4 p-2 rounded-lg text-primary-variant hover:text-primary hover:bg-secondary transition-colors" title="Toggle Theme">
+    <svg id="login-icon-sun" class="w-5 h-5 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"></path></svg>
+    <svg id="login-icon-moon" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"></path></svg>
+  </button>
+  <form id="admin-login-form" onsubmit="event.preventDefault(); submitAdminLogin();" class="border border-secondary-highlight rounded-xl p-8 max-w-sm w-full shadow-2xl text-center" style="background-color: var(--color-background-alt);">
+    <div class="mb-4 flex justify-center text-primary">
+      <svg xmlns="http://www.w3.org/2000/svg" class="h-10 w-10 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+      </svg>
+    </div>
+    <h2 class="text-xl font-bold text-primary mb-1">Triton Admin Portal</h2>
+    <p class="text-xs text-primary-variant mb-6">Enter password to access server streams & key management.</p>
+    
+    <div class="text-left mb-3">
+      <label class="block text-[10px] font-semibold uppercase tracking-wider text-primary-variant mb-1">Account Name</label>
+      <input type="text" id="admin-login-user" name="username" autocomplete="username" class="w-full bg-secondary border border-secondary-highlight rounded-lg px-3 py-2 text-primary text-xs focus:outline-none focus:border-accent" placeholder="admin" required />
+    </div>
+    
+    <div class="text-left mb-4">
+      <label class="block text-[10px] font-semibold uppercase tracking-wider text-primary-variant mb-1">Password</label>
+      <input type="password" id="admin-login-pass" name="password" autocomplete="current-password" class="w-full bg-secondary border border-secondary-highlight rounded-lg px-3 py-2 text-primary text-xs font-mono focus:outline-none focus:border-accent" placeholder="••••••••" required />
+    </div>
+
+    <div class="flex items-center mb-5">
+      <label class="flex items-center gap-2 text-xs text-primary-variant cursor-pointer">
+        <input type="checkbox" id="login-remember" class="accent-[#10b981]" />
+        <span>Remember me</span>
+      </label>
+    </div>
+    
+    <button type="submit" class="w-full btn btn-primary text-xs font-bold py-2.5">Log In</button>
+    <div id="admin-login-error" class="hidden text-xs text-danger border border-danger/20 bg-danger/5 rounded-lg p-2.5 mt-4"></div>
+  </form>
+</div>
+
+<!-- ─── MODEL SELECT OVERLAY ──────────────────────────────── -->
+<div id="model-select-overlay" class="modal-backdrop" style="display:none;position:fixed;inset:0;z-index:90;background:rgba(10,11,12,.85);align-items:center;justify-content:center;padding:16px;">
+  <div class="panel" style="max-width:400px;width:100%;background:var(--color-background-alt);border:1px solid var(--border);position:relative;display:flex;flex-direction:column;padding:24px;box-shadow:var(--shadow);" onclick="event.stopPropagation()">
+    <h3 class="text-lg font-bold text-primary mb-1">Select Inference Models</h3>
+    <p class="text-xs text-primary-variant mb-4">Choose models to load for this live stream session. Multi-model pipelines increase accuracy but require more GPU VRAM.</p>
+    
+    <div class="model-checklist scrollbar-hidden" id="d-model-list-overlay" style="max-height: 250px; overflow-y: auto; border: 1px solid var(--border); padding: 8px; border-radius: 8px; background: var(--color-background); display: flex; flex-direction: column; gap: 8px;">
+      <!-- Dynamically filled checkboxes -->
+    </div>
+    
+    <div class="flex items-center gap-3 mt-4">
+      <button class="btn btn-ghost text-xs py-1.5 px-3" onclick="selectAllModelsOverlay(true)">Select All</button>
+      <button class="btn btn-ghost text-xs py-1.5 px-3" onclick="selectAllModelsOverlay(false)">Clear All</button>
+      <button class="btn btn-connect text-xs font-bold py-1.5 px-4 ml-auto" onclick="closeModelSelectOverlay()">Done</button>
+    </div>
+  </div>
+</div>
+
+<!-- ─── CREATE KEY MODAL ──────────────────────────────────── -->
+<div id="create-key-modal" class="modal-backdrop" style="display:none;position:fixed;inset:0;z-index:90;background:rgba(10,11,12,.85);align-items:center;justify-content:center;padding:16px;">
+<div class="panel" style="max-width:480px;width:100%;max-height:90vh;overflow-y:auto;background:var(--color-background-alt);border:1px solid var(--border);position:relative;display:flex;flex-direction:column;padding:24px;box-shadow:var(--shadow);" onclick="event.stopPropagation()">
+    <h3 class="text-lg font-bold text-primary mb-3">Create Secret Key</h3>
+    
+    <div class="mb-4">
+      <label class="block text-[10px] font-semibold uppercase tracking-wider text-primary-variant mb-1">Key Name</label>
+      <input type="text" id="new-key-name" class="w-full bg-background border border-secondary-highlight rounded-lg px-3 py-2 text-primary text-xs focus:outline-none focus:border-primary" placeholder="e.g., Development Edge Server" />
+    </div>
+
+    <div class="mb-4">
+      <label class="block text-[10px] font-semibold uppercase tracking-wider text-primary-variant mb-1">Scopes</label>
+      <div class="text-[10px] text-primary-variant mb-1.5 leading-normal">
+        Scopes dictate authorization permissions for the API token.
+      </div>
+      <div class="flex flex-col gap-2 bg-background border border-secondary-highlight rounded-lg p-3">
+        <label class="flex items-start gap-2 text-xs text-primary-variant cursor-pointer">
+          <input type="checkbox" id="scope-infer" class="accent-[#10b981] mt-0.5" checked />
+          <div>
+            <span class="text-primary font-semibold block">inference</span>
+            <span class="text-[10px]">Grants ability to stream camera frames and run inference endpoints (e.g. <code>/ws/stream</code>, <code>/predict</code>). Required for clients running detections.</span>
+          </div>
+        </label>
+        <label class="flex items-start gap-2 text-xs text-primary-variant cursor-pointer">
+          <input type="checkbox" id="scope-read" class="accent-[#10b981] mt-0.5" />
+          <div>
+            <span class="text-primary font-semibold block">data:read</span>
+            <span class="text-[10px]">Allows read access to tracking query databases, stored gallery events, logs, and live health statistics.</span>
+          </div>
+        </label>
+        <label class="flex items-start gap-2 text-xs text-primary-variant cursor-pointer">
+          <input type="checkbox" id="scope-adm" class="accent-[#10b981] mt-0.5" />
+          <div>
+            <span class="text-primary font-semibold block">admin</span>
+            <span class="text-[10px]">Grants full read/write administrative access, including model settings changes, database purges, and API token modifications.</span>
+          </div>
+        </label>
+      </div>
+    </div>
+
+    <div class="mb-4">
+      <label class="block text-[10px] font-semibold uppercase tracking-wider text-primary-variant mb-1">Model Access</label>
+      <div class="text-[10px] text-primary-variant mb-1.5 leading-normal">
+        Restrict client token to load and predict ONLY with selected models. Unauthorized models will return <code>403 Forbidden</code> errors.
+      </div>
+      <div class="flex gap-4 mb-2 text-xs">
+        <label class="flex items-center gap-1.5 cursor-pointer">
+          <input type="radio" name="model-access-opt" value="all" checked class="accent-[#10b981]" onchange="onModelAccessOptChange()" />
+          <span>All Loaded Models</span>
+        </label>
+        <label class="flex items-center gap-1.5 cursor-pointer">
+          <input type="radio" name="model-access-opt" value="restrict" class="accent-[#10b981]" onchange="onModelAccessOptChange()" />
+          <span>Restricted Models</span>
+        </label>
+      </div>
+      <div id="modal-restrict-models-list" class="hidden relative w-full mt-1.5">
+        <button type="button" class="w-full bg-background border border-secondary-highlight rounded-lg px-2.5 py-2 text-primary text-xs flex items-center justify-between text-left cursor-pointer" id="keys-model-select-btn" onclick="toggleModelDropdown('keys', event)">
+          <span class="truncate text-xs font-mono text-primary" id="keys-model-select-label">Select models...</span>
+          <svg class="h-4 w-4 text-primary-variant transition-transform duration-200" id="keys-model-select-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+        </button>
+        <div id="keys-model-select-menu" style="display:none; margin-top:6px; background:var(--bg2); border:1px solid var(--border); border-radius:var(--radius); padding:8px; max-height:220px; overflow-y:auto; flex-direction:column; gap:4px;" onclick="event.stopPropagation()">
+          <div class="flex items-center justify-between pb-1.5 mb-1 border-b border-secondary-highlight px-1">
+            <span class="text-[10px] font-mono text-primary-variant uppercase tracking-wider" id="keys-model-count">0 selected</span>
+            <div class="flex gap-1.5">
+              <button type="button" class="text-[10px] font-semibold text-primary-variant hover:text-primary px-1.5 py-0.5 rounded hover:bg-secondary transition-colors" onclick="selectAllKeyModels(true)">All</button>
+              <button type="button" class="text-[10px] font-semibold text-primary-variant hover:text-primary px-1.5 py-0.5 rounded hover:bg-secondary transition-colors" onclick="selectAllKeyModels(false)">None</button>
+            </div>
+          </div>
+          <div class="flex flex-col gap-0.5" id="keys-model-list-inner">
+            <!-- Loaded models checkboxes populated dynamically -->
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="mb-4">
+      <label class="block text-[10px] font-semibold uppercase tracking-wider text-primary-variant mb-1">Expiration</label>
+      <select id="new-key-expiry-select" class="w-full bg-background border border-secondary-highlight rounded-lg px-2.5 py-2 text-primary text-xs focus:outline-none focus:border-primary" onchange="onExpirySelectChange()">
+        <option value="1">1 day</option>
+        <option value="7">7 days</option>
+        <option value="30" selected>30 days</option>
+        <option value="90">3 months</option>
+        <option value="180">6 months</option>
+        <option value="365">12 months</option>
+        <option value="0">Never (Perpetual)</option>
+        <option value="custom">Custom date...</option>
+      </select>
+      <div id="custom-expiry-wrap" class="hidden mt-2">
+        <label class="block text-[9px] font-semibold uppercase tracking-wider text-primary-variant mb-1">Select Custom Date</label>
+        <input type="date" id="new-key-expiry-custom" class="w-full bg-background border border-secondary-highlight rounded-lg px-3 py-2 text-primary text-xs focus:outline-none focus:border-primary" />
+      </div>
+    </div>
+
+    <div class="flex justify-end gap-3 mt-4">
+      <button class="btn btn-ghost text-xs" onclick="closeCreateKeyModal()">Cancel</button>
+      <button class="btn btn-connect text-xs font-bold" onclick="submitCreateApiKey()">Create Key</button>
+    </div>
+  </div>
+</div>
+
+<!-- ─── EDIT KEY MODAL ──────────────────────────────────── -->
+<div id="edit-key-modal" class="modal-backdrop" style="display:none;position:fixed;inset:0;z-index:90;background:rgba(10,11,12,.85);align-items:center;justify-content:center;padding:16px;">
+  <div class="panel" style="max-width:480px;width:100%;background:var(--color-background-alt);border:1px solid var(--border);position:relative;display:flex;flex-direction:column;padding:24px;box-shadow:var(--shadow);" onclick="event.stopPropagation()">
+    <h3 class="text-lg font-bold text-primary mb-3">Edit Secret Key</h3>
+    <input type="hidden" id="edit-key-id" />
+    
+    <div class="mb-4">
+      <label class="block text-[10px] font-semibold uppercase tracking-wider text-primary-variant mb-1">Key Name</label>
+      <input type="text" id="edit-key-name" class="w-full bg-background border border-secondary-highlight rounded-lg px-3 py-2 text-primary text-xs focus:outline-none focus:border-primary" placeholder="Key name..." />
+    </div>
+
+    <div class="mb-4">
+      <label class="block text-[10px] font-semibold uppercase tracking-wider text-primary-variant mb-1">Expiration</label>
+      <select id="edit-key-expiry-select" class="w-full bg-background border border-secondary-highlight rounded-lg px-2.5 py-2 text-primary text-xs focus:outline-none focus:border-primary" onchange="onEditExpirySelectChange()">
+        <option value="keep" selected>Keep current expiration</option>
+        <option value="7">Extend 7 days from now</option>
+        <option value="30">Extend 30 days from now</option>
+        <option value="90">Extend 3 months from now</option>
+        <option value="365">Extend 12 months from now</option>
+        <option value="0">Never (Perpetual)</option>
+        <option value="custom">Custom date...</option>
+      </select>
+      <div id="edit-custom-expiry-wrap" class="hidden mt-2">
+        <label class="block text-[9px] font-semibold uppercase tracking-wider text-primary-variant mb-1">Select Custom Date</label>
+        <input type="date" id="edit-key-expiry-custom" class="w-full bg-background border border-secondary-highlight rounded-lg px-3 py-2 text-primary text-xs focus:outline-none focus:border-primary" />
+      </div>
+    </div>
+
+    <div class="flex justify-end gap-3 mt-4">
+      <button class="btn btn-ghost text-xs" onclick="closeEditKeyModal()">Cancel</button>
+      <button class="btn btn-connect text-xs font-bold" onclick="submitEditApiKey()">Save Changes</button>
+    </div>
+  </div>
+</div>
+
+<!-- ─── REVEAL KEY MODAL ──────────────────────────────────── -->
+<div id="reveal-key-modal" class="modal-backdrop" style="display:none;position:fixed;inset:0;z-index:90;background:rgba(10,11,12,.85);align-items:center;justify-content:center;padding:16px;">
+  <div class="panel" style="max-width:440px;width:100%;background:var(--color-background-alt);border:1px solid var(--border);position:relative;display:flex;flex-direction:column;padding:24px;box-shadow:var(--shadow);" onclick="event.stopPropagation()">
+    <h3 class="text-lg font-bold text-primary mb-3">API Key Created</h3>
+    <div class="bg-yellow-500/5 border border-yellow-500/20 text-yellow-500 rounded-lg p-3 text-xs leading-normal mb-4">
+      <strong>Warning:</strong> Copy this secret key and store it safely. For security reasons, it cannot be shown again.
+    </div>
+    <div class="flex items-center justify-between bg-background border border-secondary-highlight rounded-lg p-3 text-xs font-mono mb-4 word-break-all">
+      <span id="plaintext-reveal-key" style="user-select:all; word-break:break-all; flex:1; padding-right:12px; font-family: monospace;" class="text-primary"></span>
+      <button class="btn btn-ghost text-xs font-bold py-1 px-3" id="toggle-reveal-key-btn" onclick="toggleRevealKeyVisibility()">Show</button>
+      <button class="btn btn-ghost text-xs font-bold py-1 px-3 ml-1" onclick="copyPlaintextKey()">Copy</button>
+    </div>
+    <div class="flex justify-end mt-2">
+      <button class="btn btn-connect text-xs font-bold" onclick="closeRevealKeyModal()">Done</button>
+    </div>
+  </div>
+</div>
+
+<!-- ─── REVOKE CONFIRM MODAL ──────────────────────────────── -->
+<div id="revoke-confirm-modal" class="modal-backdrop" style="display:none;position:fixed;inset:0;z-index:90;background:rgba(10,11,12,.85);align-items:center;justify-content:center;padding:16px;">
+  <div class="panel" style="max-width:400px;width:100%;background:var(--color-background-alt);border:1px solid var(--border);position:relative;display:flex;flex-direction:column;padding:24px;box-shadow:var(--shadow);" onclick="event.stopPropagation()">
+    <h3 class="text-lg font-bold text-primary mb-2">Revoke API Key</h3>
+    <p class="text-xs text-primary-variant mb-6 leading-normal">
+      <span>Are you sure you want to revoke</span>
+      "<span id="revoke-key-display-name" class="font-semibold text-primary"></span>"? 
+      <span>Clients using this key will immediately lose access.</span>
+    </p>
+    <div class="flex justify-end gap-3">
+      <button class="btn btn-ghost text-xs" onclick="closeRevokeConfirmModal()">Cancel</button>
+      <button class="btn btn-ghost text-xs font-bold text-danger border border-danger/20 hover:bg-danger/10" onclick="submitRevokeApiKey()">Revoke</button>
+    </div>
+  </div>
+</div>
+</body>
+</html>

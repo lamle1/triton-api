@@ -1,0 +1,22 @@
+fastapi>=0.111.0
+websockets>=12.0
+uvicorn[standard]>=0.29.0
+pydantic-settings
+qdrant-client>=1.7.0
+scipy>=1.10.0
+lapx>=0.5.5
+python-multipart>=0.0.9
+httpx>=0.27.0
+numpy>=2.4,<2.5
+opencv-python-headless>=4.13,<4.14
+tritonclient[grpc]>=2.43.0
+pycocotools>=2.0.7
+ultralytics>=8.3.0
+onnx>=1.16.0
+onnxscript>=0.1.0
+pillow>=10.0.0
+psutil>=5.9.0
+torch>=2.12,<2.13
+torchvision>=0.27,<0.28
+mobileclip @ git+https://github.com/ultralytics/mobileclip.git
+clip @ git+https://github.com/ultralytics/CLIP.git
